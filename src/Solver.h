@@ -19,10 +19,10 @@
 #ifndef COSSOLVE_SOLVER_H
 #define COSSOLVE_SOLVER_H
 
+#include "config.h"
 #include "Logger.h"
 
 #include <eigen3/Eigen/Eigen>
-#include <eigen3/Eigen/UmfPackSupport>
 
 namespace cossolve {
 
@@ -58,23 +58,38 @@ public:
     ~Solver();
 
     inline Eigen::Ref<const VectorType> getStrains() const { return strains.block(0, 0, nodeIndex(-1), 1); }
-    inline const std::vector<CoordType>& getCoords() const { return gs; }
+    inline const std::vector<CoordType>& getCoords() const { return gBody; }
     inline int getNodeCount() const { return nNodes; }
 
     // Adds a force to the rod.
     // The force is transformed from its actual position to act
     // on the nearest node.
+    // The magnitude of force must be converted to a force per unit length first.
     void addForce(ScalarType s, Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
 
+    // Adds a point force to the rod.
+    // This is a convenience function which simply scales the input appropriately for
+    // the call to addForce.
+    void addPointForce(ScalarType s, Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
+    
+    // Adds a distributed force to the rod.
+    // The distributed force is transformed into discrete forces
+    // distributed approximately a segment length apart.
+    void addDistributedForce(ScalarType s1, ScalarType s2,
+			     Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
+    
+    // Solves a single solution time step
+    void timeStep();
+    
     // Solves the ODE for strains based on the current loads
-    void solveStrains();
+    void computeStrains();
 
     // Solves the coordinate transform ODE based on current strains
-    void solveCoords();
+    void solveCoords(int baseNode = 0);
     
 private:
     // Useful utilities
-    Logger logger;
+    Logger<LogLevel::debug> logger;
     
     // Physical parameters
     const ScalarType tensileModulus;
@@ -99,27 +114,35 @@ private:
     const int nDims; // The number of dimensions in the problem.
     const int endIndex; // Index of one-past-the end of a full-length vector
     const ScalarType ds; // The change in arclength parameter per segment
+    ScalarType dt; // The time step.
     
     // System state
     VectorType strains;
     VectorType freeStrains;
     VectorType forces;
-    std::vector<CoordType> gs;
-    SingleVectorType momentOfInertia;
-    CoordType centroid;
+    CoordType gCentroid; // From centroid to spatial
+    std::vector<CoordType> gBody; // From body to spatial
+    std::vector<CoordType> gBodyCentroid; // From centroid to body
+    std::vector<CoordType> gCentroidBody; // From body to centroid
+    SingleVectorType rigidBodyVelocity;
+    SingleVectorType rigidBodyAcceleration;
+    VectorType nodalVelocities;
+    VectorType nodalAccelerations;
     
     // System parameter matrices
     MatrixType K; // Stiffness matrix
     MatrixType M; // Inertia matrix
-    MatrixType A; // Adjoint matrix
+    MatrixType Af; // Adjoint strain matrix
+    MatrixType Av; // Adjoint velocity matrix
     MatrixType D; // Derivative matrix
     MatrixType E; // Integral matrix
-    MatrixType AK; // A*K (intermediate matrix used in strain calculation)
+    MatrixType AfK; // Af*K (intermediate matrix used in strain calculation)
+    MatrixType AvM; // Av*M (intermediate matrix used in strain calculation)
     MatrixType EinvKD; // inv(E)*K*D
+    SingleMatrixType Mrigid; // Rigid body inertia tensor
 
     // Solvers
-    Eigen::UmfPackLU<MatrixType> matrixSolver;
-    Eigen::UmfPackLU<MatrixType> strainSolver;
+    SparseLUSolver<MatrixType> sparseLuSolver;
     
     // Helper functions
 
@@ -154,13 +177,26 @@ private:
 	return g.block<Sizes::entriesPerPoint, 1>(0, 3);
     }
     void initStateVectors();
+
+    // The following functions initialize the various system matrices.
+    // initSystemMatrices calls each subsequent function to do full initialization.
     void initSystemMatrices();
+    void initStiffnessMatrix();
+    void initInertiaMatrix();
+    void initDerivativeMatrix();
+    void initIntegralMatrix();
+    void initStrainEqnMatrix();
+
+    // Regenerates the strain adjoint matrix.
     void generateAdjointMatrix();
         
     // This function places forces on the beam.
     // The force is transformed from its actual position s to the nearest node on
     // the rod.
     void applyForces();
+
+    // Calculates contact forces with the ground and applies them to the rod
+    void applyContactForces();
 
     // This function generates a coordinate transformation matrix which transforms
     // from the nearest node to s to s.
@@ -186,6 +222,15 @@ private:
     // Computes the centroid and mass moment of inertia of the rod based
     // on the current geometry.
     void computeInertia();
+
+    // Computes the rigid body acceleration and velocity of the rod.
+    void computeRigidKinematics();
+
+    // Applies the rigid body velocity to all nodes on the rod.
+    void computeNodalVelocities();
+
+    // Applies the rigid body acceleration to all nodes on the rod.
+    void computeNodalAccelerations();
 };
 
 } // namespace cossolve

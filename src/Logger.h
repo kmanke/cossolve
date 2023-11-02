@@ -27,19 +27,22 @@
 
 namespace cossolve {
 
+enum class LogLevel : uint8_t
+{
+    debug = 0,
+    info = 1,
+    warning = 2,
+    error = 3,
+    fatal = 4
+};
+
+template <LogLevel minLevel = LogLevel::info>
 class Logger
 {
+    template <LogLevel level>
     class Entry;
 
 public:
-    enum LogLevel
-    {
-	debug = 0,
-	info = 1,
-	warning = 2,
-	error = 3,
-	fatal = 4
-    };
 
     Logger(std::ostream& out) : out(out) { }
 
@@ -54,13 +57,14 @@ public:
     {
 	endTime = std::chrono::high_resolution_clock::now();
 	auto us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-	(*this)(LogLevel::debug) << timerPrefix << timerLabel << timerPostfix
-				 << us.count() << timerUnits;
+	log() << timerPrefix << timerLabel << timerPostfix
+	      << us.count() << timerUnits;
     }
-    
-    Entry operator()(LogLevel level)
+
+    template <LogLevel level = LogLevel::debug>
+    Entry<level> log()
     {
-	return Entry(level, out);
+	return Entry<level>(out);
     }
 
 private:
@@ -81,29 +85,45 @@ private:
     static constexpr std::string_view timerPostfix = "` completed in ";
     static constexpr std::string_view timerUnits = " us.";
 
+    template <LogLevel level>
     class Entry
     {
     public:
 	// Constructor generates the timestamp and stores a reference to the output stream
-        Entry(LogLevel level, std::ostream& out) : out(out)
+        Entry(std::ostream& out) : out(out)
 	{
-	    std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	    auto timeStamp = std::put_time(std::localtime(&now), "[%Y-%m-%d %X]");
-	    str << timeStamp << Logger::logLevelLabels[level];
-
+	    if constexpr(level >= minLevel)
+	    {
+		std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+		auto timeStamp = std::put_time(std::localtime(&now), "[%Y-%m-%d %X]");
+		str << timeStamp << Logger::logLevelLabels[static_cast<uint8_t>(level)];
+	    }
 	    return;
 	}
 	// Upon destruction, output `str` to the output stream
 	~Entry()
 	{
-	    str << std::endl;
-	    out << str.str();
+	    if constexpr(level >= minLevel)
+	    {
+		str << std::endl;
+		out << str.str();
+	    }
 
 	    return;
 	}
 	// Forward << to the underlying stream
 	template <typename T>
-	std::ostream& operator<< (T&& t) { return str << std::forward<T>(t); }
+	decltype(auto) operator<< (T&& t)
+	{
+	    if constexpr(level >= minLevel)
+	    {
+		return str << std::forward<T>(t);
+	    }
+	    else
+	    {
+		return *this;
+	    }
+	}
 	
     private:
 	std::stringstream str;

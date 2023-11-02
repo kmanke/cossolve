@@ -59,7 +59,8 @@ void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* for
 
 void cossolve_Solver_solveStrains(SolverHandle handle)
 {
-    reinterpret_cast<cossolve::Solver*>(handle)->solveStrains();
+//    reinterpret_cast<cossolve::Solver*>(handle)->solveStrains();
+    reinterpret_cast<cossolve::Solver*>(handle)->timeStep();
     return;
 }
     
