@@ -37,7 +37,8 @@ Solver::Solver(int _nNodes, ScalarType _tensileModulus, ScalarType _poissonRatio
 {
     logger.log<LogLevel::info>() << "Initializing solver with " << nNodes << " nodes.";
     logger.startTimer("initialization");
-    dt = 0.01;
+    dt = 0.00001;
+    t = 0;
     initSystemMatrices();
     initStateVectors();
     addDistributedForce(0, 1, 9.81*linearDensity*SingleVectorType {0, 0, -1, 0, 0, 0}, false);
@@ -119,15 +120,19 @@ void Solver::addDistributedForce(ScalarType s1, ScalarType s2,
 
 void Solver::timeStep()
 {
-    computeInertia();
-    // applyContactForces();
+    t += dt;
+    
+    /*computeInertia();
     applyForces();
+    applyContactForces();
     computeRigidKinematics();
     computeNodalAccelerations();
-    applyForces();
-    computeStrains();
+    //computeStrains();
     computeNodalVelocities();
-    solveCoords();
+    solveCoords();*/
+    solveRigidEquilibrium(t);
+    computeStrains();
+    computeDeformation();
 
     return;
 }
@@ -363,12 +368,13 @@ void Solver::generateAdjointMatrix()
     // matrix 
     }*/
 
-void Solver::applyForces()
+void Solver::applyForces(ScalarType scaleFactor)
 {
     CoordType g;
     SingleMatrixType Adg;
-
-    // First apply external forces
+    forces.setZero();
+    
+    // Apply all external forces
     for (auto it = externalForces.cbegin(); it != externalForces.cend(); ++it)
     {
 	Eigen::Ref<const SingleVectorType> force = std::get<0>(*it);
@@ -386,21 +392,38 @@ void Solver::applyForces()
 	    g.block<3, 3>(0, 0) = gBody[node].block<3, 3>(0, 0);
 	    Adg.setZero();
 	    Adjoint(g, Adg);
-	    nodeVector(forces, node) = Adg.transpose()*force;
+	    nodeVector(forces, node) = Adg.transpose() * force * scaleFactor;
 	}
     }
-
-    // The last vector in our forces vector holds the boundary condition (strain at the imaginary (n+1)th node)
-    SingleMatrixType invK = SingleMatrixType(K.topLeftCorner(Sizes::entriesPerVector,
-							     Sizes::entriesPerVector)).inverse();
-    SingleMatrixType Mblock = M.block(0, 0, Sizes::entriesPerVector, Sizes::entriesPerVector);
-    nodeVector(forces, -1) = -(nodeVector(strains, -2) - ds/2*invK*((nodeVector(forces, -2)) - Mblock*nodeVector(nodalAccelerations, -2)));
 
     return; 
 }
 
 void Solver::applyContactForces()
 {
+    // Find areas which are below the ground
+    for (int node = 0; node < nNodes; node++)
+    {
+	ScalarType clearance = origin(gBody[node])(2);
+	if (clearance < 0)
+	{
+	    SingleVectorType force{0, 0, -1, 0, 0, 0};
+	    force *= 1000 * clearance;
+	    SingleVectorType damping{0, 0, -1, 0, 0, 0};
+	    damping *= 10 * nodeVectorConst(nodalVelocities, node)(2);
+	    force += damping;
+	    // We need to rotate the contact force into the body frame
+	    CoordType g = CoordType::Identity();
+	    SingleMatrixType Adg = SingleMatrixType::Zero();
+	    g.block<3, 3>(0, 0) = gBody[node].block<3, 3>(0, 0);
+	    Adjoint(g, Adg);
+	    force = Adg.transpose() * force;
+	    nodeVector(forces, node) += force;
+	    //logger.log() << "Contacted detected at node " << node << ". Resultant force (in body frame): " << force.transpose();
+	}
+    }
+
+    return;
 }
 
 int Solver::intermediateTransform(ScalarType s, Eigen::Ref<CoordType> g) const
@@ -494,13 +517,21 @@ void Solver::relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<SingleVec
 void Solver::computeStrains()
 {
     logger.startTimer("Solve Strain");
-    
     // Reconstruct the adjoint matrices
     logger.startTimer("Adjoint Matrix");
     generateAdjointMatrix();
     AfK = (Af * K).pruned();
     AvM = (Av * M).pruned();
     logger.endTimer();
+
+    // The last vector in our forces vector holds the boundary condition (strain at the imaginary (n+1)th node)
+    SingleMatrixType invK = SingleMatrixType(K.topLeftCorner(Sizes::entriesPerVector,
+							     Sizes::entriesPerVector)).inverse();
+    SingleMatrixType Mblock = M.block(nodeIndex(-2), nodeIndex(-2), Sizes::entriesPerVector, Sizes::entriesPerVector);
+    SingleMatrixType Ablock = Av.block(nodeIndex(-2), nodeIndex(-2), Sizes::entriesPerVector, Sizes::entriesPerVector);
+    nodeVector(forces, -1) = -(nodeVector(strains, -2) + ds/2*invK*(-(nodeVector(forces, -2))
+								    + Mblock*nodeVector(nodalAccelerations, -2)
+								    - 0 * Ablock*Mblock*nodeVector(nodalVelocities, -2)));    
     
     // Compute
     logger.startTimer("compute");
@@ -512,35 +543,6 @@ void Solver::computeStrains()
     strains = sparseLuSolver.solve(rhs);
     logger.endTimer();
     
-    return;
-}
-
-void Solver::solveCoords(int baseNode)
-{
-    logger.startTimer("coordinate calculation");
-    // First, update baseNode position due to rigid body velocity
-    CoordType vHat = CoordType::Zero();
-    se3hat(nodeVectorConst(nodalVelocities, baseNode), vHat);
-    gBody[baseNode] *= (vHat * dt).exp();
-
-    // Now apply deformation due to strains
-    SingleVectorType integratedStrain;
-    CoordType integratedStrainHat = CoordType::Zero();
-    for (int node = baseNode - 1; node >= 0; node--)
-    {
-	integratedStrain.setZero();
-	nodalStrainIntegral(node, node + 1, integratedStrain);
-	se3hat(integratedStrain, integratedStrainHat);
-	gBody[node] = gBody[node+1]*(-integratedStrainHat.exp());
-    }
-    for (int node = baseNode + 1; node < nNodes; node++)
-    {
-	integratedStrain.setZero();
-	nodalStrainIntegral(node - 1, node, integratedStrain);
-	se3hat(integratedStrain, integratedStrainHat);
-	gBody[node] = gBody[node-1]*integratedStrainHat.exp();
-    }
-    logger.endTimer();
     return;
 }
 
@@ -589,7 +591,7 @@ void Solver::computeInertia()
     return;
 }
 
-void Solver::computeRigidKinematics()
+void Solver::computeRigidKinematics(ScalarType stepSize)
 {
     // First, calculate the net force by transforming all of the nodal
     // forces to the centroid
@@ -603,14 +605,17 @@ void Solver::computeRigidKinematics()
     // The body forces are per unit length. We need to convert back to
     // discrete values.
     netForce *= length / nSegments;
-
+    //logger.log() << "Net force: " << netForce.transpose();
+    
     // Now compute acceleration
     Adg.setZero();
     adjoint(rigidBodyVelocity, Adg);
     rigidBodyAcceleration = Mrigid.inverse() * (netForce + Adg.transpose() * Mrigid * rigidBodyVelocity);
 
     // Update velocity
-    rigidBodyVelocity += rigidBodyAcceleration * dt;
+    rigidBodyVelocity += rigidBodyAcceleration * stepSize;
+
+//    logger.log() << "v = " << rigidBodyVelocity.transpose() << "\na = " << rigidBodyAcceleration.transpose();
     
     return;
 }
@@ -634,6 +639,74 @@ void Solver::computeNodalAccelerations()
 	Adjoint(gBodyCentroid[node], Adg);
 	nodeVector(nodalAccelerations, node) = Adg * rigidBodyAcceleration;
     }
+    return;
+}
+
+void Solver::computeTranslation()
+{
+    CoordType vHat = CoordType::Zero();
+    for (int node = 0; node < nNodes; node++)
+    {
+	se3hat(nodeVectorConst(nodalVelocities, node), vHat);
+	gBody[node] *= (vHat * dt).exp();
+    }
+    return;
+}
+
+
+void Solver::computeDeformation(int baseNode)
+{
+    SingleVectorType integratedStrain;
+    CoordType integratedStrainHat = CoordType::Zero();
+    for (int node = baseNode - 1; node >= 0; node--)
+    {
+	integratedStrain.setZero();
+	nodalStrainIntegral(node, node + 1, integratedStrain);
+	se3hat(integratedStrain, integratedStrainHat);
+	gBody[node] = gBody[node+1]*(-integratedStrainHat.exp());
+    }
+    for (int node = baseNode + 1; node < nNodes; node++)
+    {
+	integratedStrain.setZero();
+	nodalStrainIntegral(node - 1, node, integratedStrain);
+	se3hat(integratedStrain, integratedStrainHat);
+	gBody[node] = gBody[node-1]*integratedStrainHat.exp();
+    }
+    return;
+}
+
+void Solver::solveRigidEquilibrium(ScalarType solverTime)
+{
+    // Ensure velocities and accelerations are zero
+    rigidBodyAcceleration.setZero();
+    rigidBodyVelocity.setZero();
+    nodalVelocities.setZero();
+    nodalAccelerations.setZero();
+
+    // Pseudo-time for the rigid body motion iterations
+    ScalarType rigidTime = 0;
+    ScalarType stepSize = 1e-3;
+
+    const ScalarType tol = 1e-3;
+
+    logger.startTimer("Rigid body motion");
+    do {
+	rigidBodyAcceleration(0) = 0;
+	rigidBodyAcceleration(1) = 0;
+	rigidBodyVelocity(0) = 0;
+	rigidBodyVelocity(1) = 0;
+	computeInertia();
+	applyForces(solverTime);
+	applyContactForces();
+	computeRigidKinematics(stepSize);
+	computeNodalAccelerations();
+	computeNodalVelocities();
+	computeTranslation();
+	//logger.log() << "Solving rigid body motion. v = " << rigidBodyVelocity.norm() << ", a = " << rigidBodyAcceleration.norm();
+    } while (rigidBodyAcceleration.norm() > tol || rigidBodyVelocity.norm() > tol);
+
+    logger.endTimer();
+    logger.log() << "Done!";
     return;
 }
 

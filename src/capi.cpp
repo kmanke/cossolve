@@ -66,7 +66,7 @@ void cossolve_Solver_solveStrains(SolverHandle handle)
     
 void cossolve_Solver_solveCoords(SolverHandle handle)
 {
-    reinterpret_cast<cossolve::Solver*>(handle)->solveCoords();
+    //reinterpret_cast<cossolve::Solver*>(handle)->solveCoords();
     return;
 }
 

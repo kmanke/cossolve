@@ -83,9 +83,6 @@ public:
     
     // Solves the ODE for strains based on the current loads
     void computeStrains();
-
-    // Solves the coordinate transform ODE based on current strains
-    void solveCoords(int baseNode = 0);
     
 private:
     // Useful utilities
@@ -115,6 +112,7 @@ private:
     const int endIndex; // Index of one-past-the end of a full-length vector
     const ScalarType ds; // The change in arclength parameter per segment
     ScalarType dt; // The time step.
+    ScalarType t;
     
     // System state
     VectorType strains;
@@ -193,7 +191,7 @@ private:
     // This function places forces on the beam.
     // The force is transformed from its actual position s to the nearest node on
     // the rod.
-    void applyForces();
+    void applyForces(ScalarType scaleFactor);
 
     // Calculates contact forces with the ground and applies them to the rod
     void applyContactForces();
@@ -224,13 +222,25 @@ private:
     void computeInertia();
 
     // Computes the rigid body acceleration and velocity of the rod.
-    void computeRigidKinematics();
+    void computeRigidKinematics(ScalarType stepSize);
 
     // Applies the rigid body velocity to all nodes on the rod.
     void computeNodalVelocities();
 
     // Applies the rigid body acceleration to all nodes on the rod.
     void computeNodalAccelerations();
+
+    // Updates the body coordinate transformations as a result of
+    // rigid body motion.
+    void computeTranslation();
+
+    // Updates the body coordinate transformations as a result of
+    // body deformation.
+    void computeDeformation(int baseNode = 0);
+    
+    // Based on the current shape, solves for the equilibrium position
+    // and forces on the body.
+    void solveRigidEquilibrium(ScalarType solverTime);
 };
 
 } // namespace cossolve
