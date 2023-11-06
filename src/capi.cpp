@@ -3,7 +3,7 @@
  */
 
 #include "capi.h"
-#include "Solver.h"
+#include "StaticSolver.h"
 
 #include <iostream>
 
@@ -14,19 +14,19 @@ SolverHandle cossolve_createSolver(int nNodes, ScalarType tensileModulus, Scalar
 				   ScalarType momentZ, ScalarType area, ScalarType length,
 				   ScalarType linearDensity)
 {
-    return new cossolve::Solver(nNodes, tensileModulus, poissonRatio, shearModulus, momentX, momentY,
+    return new cossolve::StaticSolver(nNodes, tensileModulus, poissonRatio, shearModulus, momentX, momentY,
 				momentZ, area, length, linearDensity);
 }
 
 void cossolve_deleteSolver(SolverHandle handle)
 {
-    delete reinterpret_cast<cossolve::Solver*>(handle);
+    delete reinterpret_cast<cossolve::StaticSolver*>(handle);
     return;
 }
 
 void cossolve_getStrains(SolverHandle handle, ScalarType* outputArray)
 {
-    auto strains = reinterpret_cast<cossolve::Solver*>(handle)->getStrains();
+    auto strains = reinterpret_cast<cossolve::StaticSolver*>(handle)->getStrains();
     memcpy(outputArray, strains.data(), strains.size() * sizeof(ScalarType));
     
     return;
@@ -34,11 +34,11 @@ void cossolve_getStrains(SolverHandle handle, ScalarType* outputArray)
 
 void cossolve_getCoords(SolverHandle handle, ScalarType* outputArray)
 {
-    auto coords = reinterpret_cast<cossolve::Solver*>(handle)->getCoords();
+    auto coords = reinterpret_cast<cossolve::StaticSolver*>(handle)->getCoords();
     for (auto it = coords.cbegin(); it != coords.cend(); ++it)
     {
-	memcpy(outputArray, (*it).data(), cossolve::Solver::Sizes::byteCountPerCoord);
-	outputArray += cossolve::Solver::Sizes::entriesPerCoord;
+	memcpy(outputArray, (*it).data(), cossolve::StaticSolver::Sizes::byteCountPerCoord);
+	outputArray += cossolve::StaticSolver::Sizes::entriesPerCoord;
     }
 
     return;
@@ -46,21 +46,21 @@ void cossolve_getCoords(SolverHandle handle, ScalarType* outputArray)
     
 int cossolve_getNodeCount(SolverHandle handle)
 {
-    return reinterpret_cast<cossolve::Solver*>(handle)->getNodeCount();
+    return reinterpret_cast<cossolve::StaticSolver*>(handle)->getNodeCount();
 }
 
 void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* force, bool bodyFrame)
 {
-    reinterpret_cast<cossolve::Solver*>(handle)->addForce
-	(s, cossolve::Solver::SingleVectorType(force), bodyFrame);
+    reinterpret_cast<cossolve::StaticSolver*>(handle)->addPointForce
+	(s, cossolve::StaticSolver::SingleVectorType(force), bodyFrame);
 
     return;
 }
 
 void cossolve_Solver_solveStrains(SolverHandle handle)
 {
-//    reinterpret_cast<cossolve::Solver*>(handle)->solveStrains();
-    reinterpret_cast<cossolve::Solver*>(handle)->timeStep();
+//    reinterpret_cast<cossolve::StaticSolver*>(handle)->solveStrains();
+    reinterpret_cast<cossolve::StaticSolver*>(handle)->timeStep();
     return;
 }
     

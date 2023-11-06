@@ -74,5 +74,5 @@ target_include_directories(cossolve PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_sources(cossolve PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/se3.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/capi.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/Solver.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/StaticSolver.cpp"
 )
