@@ -20,6 +20,7 @@
 #define COSSOLVE_STATIC_SOLVER_H
 
 #include "config.h"
+#include "CossolveTypes.h"
 #include "Logger.h"
 
 #include <eigen3/Eigen/Eigen>
@@ -32,15 +33,6 @@ class StaticSolver
     using ForceList = std::list<ForceEntry>;
     
 public:
-    // Type aliases
-    using ScalarType = double; // This defines the data type of all numerical quantities used by the solver
-    using VectorType = Eigen::VectorX<ScalarType>;
-    using SingleVectorType = Eigen::Vector<ScalarType, 6>;
-    using MatrixType = Eigen::SparseMatrix<ScalarType>;
-    using SingleMatrixType = Eigen::Matrix<ScalarType, 6, 6>;
-    using CoordType = Eigen::Matrix<ScalarType, 4, 4>;
-    using PointType = Eigen::Vector<ScalarType, 3>;
-
     // This struct contains definitions of several commonly used sizes
     struct Sizes
     {
@@ -108,14 +100,18 @@ private:
     // Discretization
     const int nNodes; // The number of nodes to place on the rod
     const int nSegments; // The number of segments along the rod
-    const int nDims; // The number of dimensions in the problem.
+    int nFixedConstraints; // The number of fixed constraints
+    int nContactNodes; // The number of nodes which participate in contact
     const int endIndex; // Index of one-past-the end of a full-length vector
     const ScalarType ds; // The change in arclength parameter per segment
     ScalarType dt; // The time step.
     ScalarType t;
     
     // System state
-    VectorType strains;
+    VectorType systemVector;
+    Eigen::Ref<VectorType> ksi; // ksi(s) is the strain integrated from 0 to s
+    Eigen::Ref<VectorType> constraintForces;
+    Eigen::Ref<VectorType> contactClearances;
     VectorType freeStrains;
     VectorType forces;
     std::vector<CoordType> gBody; // From body to spatial
@@ -141,7 +137,7 @@ private:
     inline int nodeIndex(int node) const
     {
 	return (node >= 0) ? (node * Sizes::entriesPerVector)
-	    : ((nDims + node) * Sizes::entriesPerVector);
+	    : ((nNodes + node) * Sizes::entriesPerVector);
     }
     
     // Returns a reference to the vector associated with the specified node.

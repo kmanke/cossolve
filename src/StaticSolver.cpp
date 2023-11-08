@@ -188,20 +188,14 @@ void StaticSolver::initStiffnessMatrix()
     Kdiag(4) = tensileModulus * momentY;
     Kdiag(5) = tensileModulus * momentZ;
 
-    K = MatrixType(Sizes::entriesPerVector*nDims, Sizes::entriesPerVector*nDims);
+    K = MatrixType(Sizes::entriesPerVector*nNodes, Sizes::entriesPerVector*nNodes);
     std::vector<Eigen::Triplet<ScalarType>> tripletList;
-    tripletList.reserve(Sizes::entriesPerVector * nDims);
+    tripletList.reserve(Sizes::entriesPerVector * nNodes);
     int i;
-    for (i = 0; i < nodeIndex(-1); i++)
+    for (i = 0; i < endIndex; i++)
     {
 	tripletList.emplace_back(i, i, Kdiag(i % Sizes::entriesPerVector));
     }
-    // Bottom right block is identity (for BCs)
-    for (; i < endIndex; i++)
-    {
-	tripletList.emplace_back(i, i, 1);
-    }
-    K.setFromTriplets(tripletList.begin(), tripletList.end());
     return;
 }
 
