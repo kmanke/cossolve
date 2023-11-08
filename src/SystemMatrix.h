@@ -20,115 +20,102 @@
 #ifndef COSSOLVE_SYSTEM_MATRIX_H
 #define COSSOLVE_SYSTEM_MATRIX_H
 
+#include "config.h"
 #include "CossolveTypes.h"
+#include "ConstraintList.h"
+#include "SolverParameters.h"
 
 #include <eigen3/Eigen/Eigen>
-#include <cassert>
 
 namespace cossolve {
 
-// Convenience overload for adding two indices
-std::pair<int, int> operator+(const std::pair<int, int> a, const std::pair<int, int> b)
-{
-    return std::pair<int, int>(a.first + b.first, a.second + b.second);
-}
-
 struct DerivativeMatrixCoefficients
 {
-    int firstNodeCurrentCoeff;
-    int firstNodeNextCoeff;
-    int innerNodePrevCoeff;
-    int innerNodeCurrentCoeff;
-    int innerNodeNextCoeff;
-    int lastNodePrevCoeff;
-    int lastNodeIntermediateCoeff;
-    int lastNodeCurrentCoeff;
+    ScalarType firstNodeCurrentCoeff;
+    ScalarType firstNodeNextCoeff;
+    ScalarType innerNodePrevCoeff;
+    ScalarType innerNodeCurrentCoeff;
+    ScalarType innerNodeNextCoeff;
+    ScalarType lastNodePrevCoeff;
+    ScalarType lastNodeCurrentCoeff;
 };
 
 struct IntegralMatrixCoefficients
 {
-    int firstNodeCurrentCoeff;
-    int firstNodeNextCoeff;
-    int innerNodeFirstCoeff;
-    int innerNodeIntermediateCoeff;
-    int innerNodePrevCoeff;
-    int innerNodeCurrentCoeff;
-    int innerNodeNextCoeff;
-    int lastNodeFirstCoeff;
-    int lastNodePrevCoeff;
-    int lastNodeIntermediateCoeff;
-    int lastNodeCurrentCoeff;
+    ScalarType firstNodeCurrentCoeff;
+    ScalarType firstNodeNextCoeff;
+    ScalarType innerNodeFirstCoeff;
+    ScalarType innerNodeIntermediateCoeff;
+    ScalarType innerNodePrevCoeff;
+    ScalarType innerNodeCurrentCoeff;
+    ScalarType innerNodeNextCoeff;
+    ScalarType lastNodeFirstCoeff;
+    ScalarType lastNodeIntermediateCoeff;
+    ScalarType lastNodePrevCoeff;
+    ScalarType lastNodeCurrentCoeff;
 };
     
 class SystemMatrix
-{
+{    
 public:
-    SystemMatrix();
+    SystemMatrix(const SolverParameters& params, const ConstraintList& fixedConstraints);
     ~SystemMatrix();
 
     // Getter functions
-    inline Eigen::Ref<MatrixType> getMat() { return mat; }
-
+    inline const MatrixType& getMat() const { return mat; }
+    inline const MatrixType& getEinv() const { return Einv; }
+    inline const MatrixType& getAfK() const { return AfK; }
+    
     // Initialization functions
     // Initializes the strain matrix.
-    void initStrainMatrix(int nNodes, SingleMatrixType nodeStiffness,
-			  const PairList& derivativeFirstRow,
-			  const PairList& derivativeInnerRow,
-			  const PairList& derivativeLastRow,
-			  const PairList& integralFirstRow,
-			  const PairList& integralInnerRow,
-			  const PairList& integralLastRow);
+    void initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
+			  const DerivativeMatrixCoefficients& derivCoeffs,
+			  const IntegralMatrixCoefficients& intCoeffs,
+			  SparseLUSolver<MatrixType>& solver);
 
-    // Adds a fixed constraint to `node`. `node`'s coordinate transformation
-    // will be forced to equal `g`.
-    void addFixedConstraint(int node, Eigen::Ref<const CoordType> g);
+    // Updates the submatrix dimensions to accomodate an added constraint
+    // Note that the matrices are not automatically populated. A call to
+    // `updateFixedconstraints` is necessary to do so.
+    void addFixedConstraint(int index);
 
     // Removes the fixed constraint corresponding to the passed
     // constraint number.
-    void removeFixedConstraint(int constraint);
+    void removeFixedConstraint(int index); // not implemented yet
 
-    // Deactivates the fixed constraint. The constraint will still exist in
-    // the system matrix, but it will not be enforced.
-    void deactivateFixedConstraint(int constraint);
-
-    // Activates the fixed constraint.
-    void activateFixedConstraint(int constraint);
-    
 private:
-    // Type aliases
-    using Index = std::pair<int, int>;
+    // Enum for templated submatrix operations
     enum SubMatrix
     {
+	system,
 	strain,
 	fixedConstraintForce,
-	fixedConstraintLocation
+	fixedConstraintLocation,
+	fixedConstraintActive
     };
+
+    // Some shared data structures which we make use of
+    const SolverParameters& params;
+    const ConstraintList& fixedConstraints;
     
     // The full system matrix
     MatrixType mat;
 
-    // Sizes
-    int nNodes;
-    int nFixedConstraints;
-    int nContactNodes;
-
     // We need to store copies of some matrices so we can regenerate efficiently
-    MatrixType EinvKD;
-    MatrixType Af;
-    
-    // Sets all values in the specified block to zero.
-    // If prune is true, the block will be pruned after the operation.
-    template <bool prune>
-    void clearBlock(MatrixType& dst, int startRow, int startCol, int nRows, int nCols);
+    MatrixType K; // Stiffness
+    MatrixType D; // Derivative
+    MatrixType E; // Integral
+    MatrixType Einv; // E^-1
+    MatrixType EinvKD; // E^-1*K*D
+    MatrixType Af; // Adjoint strain
+    MatrixType AfK; // Af*K
 
-    // Sets all values in the specified block to the values in the
-    // reference matrix.
-    // If `prune` is true, the block will be pruned after the operation.
-    template <bool prune>
-    void copyBlock(const MatrixType& src, MatrixType& dst,
-		   int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
-		   int nRows, int nCols);
-    
+    // Updates the fixed constraint submatrix to reflect changes.
+    void updateFixedConstraints();
+
+    // Convenience wrapper around clearBlock which clears a submatrix.
+    template <SubMatrix sub, bool prune>
+    void clearBlock();
+  
     // Helper functions for indexing the various matrix types
     template <SubMatrix sub>
     int firstRow();
@@ -157,6 +144,10 @@ private:
 template <SystemMatrix::SubMatrix sub>
 int SystemMatrix::firstRow()
 {
+    if constexpr (sub == system)
+    {
+	return 0;
+    }
     if constexpr (sub == strain)
     {
 	return 0;
@@ -168,6 +159,10 @@ int SystemMatrix::firstRow()
     else if constexpr (sub == fixedConstraintLocation)
     {
 	return lastRow<strain>() + 1;
+    }
+    else if constexpr (sub == fixedConstraintActive)
+    {
+	return lastRow<fixedConstraintForce>() + 1;
     }
     else
     {
@@ -184,6 +179,10 @@ int SystemMatrix::lastRow()
 template <SystemMatrix::SubMatrix sub>
 int SystemMatrix::firstCol()
 {
+    if constexpr (sub == system)
+    {
+	return 0;
+    }
     if constexpr (sub == strain)
     {
 	return 0;
@@ -195,6 +194,10 @@ int SystemMatrix::firstCol()
     else if constexpr (sub == fixedConstraintLocation)
     {
 	return 0;
+    }
+    else if constexpr (sub == fixedConstraintActive)
+    {
+	return lastCol<fixedConstraintLocation>() + 1;
     }
     else
     {
@@ -211,17 +214,25 @@ int SystemMatrix::lastCol()
 template <SystemMatrix::SubMatrix sub>
 int SystemMatrix::nRows()
 {
+    if constexpr (sub == system)
+    {
+	return nRows<strain>() + nRows<fixedConstraintLocation>();
+    }
     if constexpr (sub == strain)
     {
-	return nNodes * twistLength;
+	return params.nNodes() * twistLength;
     }
     else if constexpr (sub == fixedConstraintForce)
     {
-	return nNodes * twistLength;
+	return params.nNodes() * twistLength;
     }
     else if constexpr (sub == fixedConstraintLocation)
     {
-	return nFixedConstraints;
+	return fixedConstraints.size();
+    }
+    else if constexpr (sub == fixedConstraintActive)
+    {
+	return fixedConstraints.size();
     }
     else
     {
@@ -232,17 +243,25 @@ int SystemMatrix::nRows()
 template <SystemMatrix::SubMatrix sub>
 int SystemMatrix::nCols()
 {
-    if constexpr (sub == strain)
+    if constexpr (sub == system)
     {
-	return nNodes * twistLength;
+	return nCols<strain>() + nCols<fixedConstraintForce>();
     }
-    if constexpr (sub == fixedConstraintForce)
+    else if constexpr (sub == strain)
     {
-	return nFixedConstraints;
+	return params.nNodes() * twistLength;
     }
-    if constexpr (sub == fixedConstraintLocation)
+    else if constexpr (sub == fixedConstraintForce)
     {
-	return nNodes * twistLength;
+	return fixedConstraints.size();
+    }
+    else if constexpr (sub == fixedConstraintLocation)
+    {
+	return params.nNodes() * twistLength;
+    }
+    else if constexpr (sub == fixedConstraintActive)
+    {
+	return fixedConstraints.size();
     }
     else
     {

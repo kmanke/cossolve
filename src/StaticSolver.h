@@ -22,6 +22,8 @@
 #include "config.h"
 #include "CossolveTypes.h"
 #include "Logger.h"
+#include "SystemMatrix.h"
+#include "SolverParameters.h"
 
 #include <eigen3/Eigen/Eigen>
 
@@ -44,31 +46,30 @@ public:
 	static constexpr std::size_t byteCountPerPoint = entriesPerPoint * sizeof(ScalarType);
     };
     
-    StaticSolver(int nNodes, ScalarType tensileModulus, ScalarType poissonRatio, ScalarType shearModulus,
-	   ScalarType momentX, ScalarType momentY, ScalarType momentZ,
-	   ScalarType area, ScalarType length, ScalarType linearDensity);
+    StaticSolver(SolverParameters&& params);
     ~StaticSolver();
 
-    inline Eigen::Ref<const VectorType> getStrains() const { return strains.block(0, 0, nodeIndex(-1), 1); }
+//    inline Eigen::Ref<const VectorType> getStrains() const { return strains.block(0, 0, nodeIndex(-1), 1); }
     inline const std::vector<CoordType>& getCoords() const { return gBody; }
-    inline int getNodeCount() const { return nNodes; }
+    inline Eigen::Ref<const VectorType> getStrains() const { return VectorType(); }
+    inline int getNodeCount() const { return params.nNodes(); }
 
     // Adds a force to the rod.
     // The force is transformed from its actual position to act
     // on the nearest node.
     // The magnitude of force must be converted to a force per unit length first.
-    void addForce(ScalarType s, Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
+    void addForce(ScalarType s, Eigen::Ref<const TwistType> force, bool bodyFrame = true);
 
     // Adds a point force to the rod.
     // This is a convenience function which simply scales the input appropriately for
     // the call to addForce.
-    void addPointForce(ScalarType s, Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
+    void addPointForce(ScalarType s, Eigen::Ref<const TwistType> force, bool bodyFrame = true);
     
     // Adds a distributed force to the rod.
     // The distributed force is transformed into discrete forces
     // distributed approximately a segment length apart.
     void addDistributedForce(ScalarType s1, ScalarType s2,
-			     Eigen::Ref<const SingleVectorType> force, bool bodyFrame = true);
+			     Eigen::Ref<const TwistType> force, bool bodyFrame = true);
     
     // Solves a single solution time step
     void timeStep();
@@ -79,52 +80,25 @@ public:
 private:
     // Useful utilities
     Logger<LogLevel::debug> logger;
-    
-    // Physical parameters
-    const ScalarType tensileModulus;
-    const ScalarType poissonRatio;
-    const ScalarType shearModulus;
-    const ScalarType momentX;
-    const ScalarType momentY;
-    const ScalarType momentZ;
-    const ScalarType area;
-    const ScalarType length;
-    const ScalarType linearDensity;
 
+    SolverParameters params;
+    
     // Applied loads
     // Each list item is a pair with the first item being the force vector
     // and the second a boolean representing whether this force's direction
     // is in the body frame or the spatial frame.
     ForceList externalForces;
-    
-    // Discretization
-    const int nNodes; // The number of nodes to place on the rod
-    const int nSegments; // The number of segments along the rod
-    int nFixedConstraints; // The number of fixed constraints
-    int nContactNodes; // The number of nodes which participate in contact
-    const int endIndex; // Index of one-past-the end of a full-length vector
-    const ScalarType ds; // The change in arclength parameter per segment
-    ScalarType dt; // The time step.
-    ScalarType t;
+    ConstraintList fixedConstraints;
     
     // System state
     VectorType systemVector;
-    Eigen::Ref<VectorType> ksi; // ksi(s) is the strain integrated from 0 to s
-    Eigen::Ref<VectorType> constraintForces;
-    Eigen::Ref<VectorType> contactClearances;
+    VectorType ksi; // ksi(s) is the strain integrated from 0 to s
     VectorType freeStrains;
     VectorType forces;
     std::vector<CoordType> gBody; // From body to spatial
-    std::vector<int> contactNodes; // A list of nodes which are currently in contact
     
     // System parameter matrices
-    MatrixType K; // Stiffness matrix
-    MatrixType M; // Inertia matrix
-    MatrixType Af; // Adjoint strain matrix
-    MatrixType D; // Derivative matrix
-    MatrixType E; // Integral matrix
-    MatrixType AfK; // Af*K (intermediate matrix used in strain calculation)
-    MatrixType EinvKD; // inv(E)*K*D
+    SystemMatrix sysMat;
 
     // Solvers
     SparseLUSolver<MatrixType> sparseLuSolver;
@@ -137,16 +111,16 @@ private:
     inline int nodeIndex(int node) const
     {
 	return (node >= 0) ? (node * Sizes::entriesPerVector)
-	    : ((nNodes + node) * Sizes::entriesPerVector);
+	    : ((params.nNodes() + node) * Sizes::entriesPerVector);
     }
     
     // Returns a reference to the vector associated with the specified node.
     // If node is < 0, returns the vector counting from the back.
-    inline Eigen::Ref<SingleVectorType> nodeVector(Eigen::Ref<VectorType> vector, int node) const
+    inline Eigen::Ref<TwistType> nodeVector(Eigen::Ref<VectorType> vector, int node) const
     {
 	return vector.block<Sizes::entriesPerVector, 1>(nodeIndex(node), 0);
     }
-    inline Eigen::Ref<const SingleVectorType> nodeVectorConst(Eigen::Ref<const VectorType> vector, int node) const
+    inline Eigen::Ref<const TwistType> nodeVectorConst(Eigen::Ref<const VectorType> vector, int node) const
     {
 	return vector.block<Sizes::entriesPerVector, 1>(nodeIndex(node), 0);
     }
@@ -162,14 +136,6 @@ private:
 	return g.block<Sizes::entriesPerPoint, 1>(0, 3);
     }
     void initStateVectors();
-
-    // The following functions initialize the various system matrices.
-    // initSystemMatrices calls each subsequent function to do full initialization.
-    void initSystemMatrices();
-    void initStiffnessMatrix();
-    void initDerivativeMatrix();
-    void initIntegralMatrix();
-    void initStrainEqnMatrix();
 
     // Regenerates the strain adjoint matrix.
     void generateAdjointMatrix();
@@ -195,13 +161,13 @@ private:
     // Input:
     //   s - The point along the rod. Must be in [0, 1].
     //   f - A vector which will be filled with the result.
-    void intermediateStrainIntegral(ScalarType s1, ScalarType s2, Eigen::Ref<SingleVectorType> f) const;
+    void intermediateStrainIntegral(ScalarType s1, ScalarType s2, Eigen::Ref<TwistType> f) const;
 
     // Integrates the strain between any two nodes on the rod.
-    void nodalStrainIntegral(int node1, int node2, Eigen::Ref<SingleVectorType> result) const;
+    void nodalStrainIntegral(int node1, int node2, Eigen::Ref<TwistType> result) const;
 
     // Integrates the strain from a node to a point x away from the node (in the positive direction)
-    void relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<SingleVectorType> result, bool subtract = false) const;
+    void relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<TwistType> result, bool subtract = false) const;
 
     // Updates the body coordinate transformations as a result of
     // body deformation.

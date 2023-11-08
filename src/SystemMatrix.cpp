@@ -17,206 +17,192 @@
  */
 
 #include "SystemMatrix.h"
+#include "MatrixOps.h"
+
+#include <iostream>
 
 namespace cossolve {
 
-SystemMatrix::SystemMatrix()
+SystemMatrix::SystemMatrix(const SolverParameters& params,
+			   const ConstraintList& fixedConstraints)
+    : params(params), fixedConstraints(fixedConstraints)
 {
+    // Allocate the full system matrix but don't initialize yet
+    mat = MatrixType(nRows<system>(), nCols<system>());
+    return;
 }
 
-SystemMatrix::~SystemMatrix()
+SystemMatrix::~SystemMatrix() { }
+
+void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
+				    const DerivativeMatrixCoefficients& derivCoeffs,
+				    const IntegralMatrixCoefficients& intCoeffs,
+				    SparseLUSolver<MatrixType>& solver)
 {
+    // Start by constructing our basic building blocks
+    clearBlock<strain, true>();
+    initStiffnessMatrix(stiffnessDiag);
+    initDerivativeMatrix(derivCoeffs);
+    initIntegralMatrix(intCoeffs);
+
+    // The integral matrix now gets inverted, multiplied with the strain and derivative
+    // matrices, and then copied into the system matrix.
+    MatrixType I = MatrixType(E.rows(), E.cols());
+    I.setIdentity();
+    solver.compute(E);
+    Einv = E;
+    Einv = solver.solve(I);
+    Einv = Einv.pruned(); // Remove zero elements
+    EinvKD = (Einv * K * D).pruned();
+    copyBlock<false>(EinvKD, mat, 0, 0, firstRow<strain>(), firstRow<strain>(),
+		     nRows<strain>(), nCols<strain>());
+
+    // We no longer need the D or E matrices, so we can release them
+    D = MatrixType();
+    E = MatrixType();
+
+    return;
 }
 
-template <bool prune>
-void SystemMatrix::clearBlock(MatrixType& dst, int startRow, int startCol, int nRows, int nCols)
+void SystemMatrix::addFixedConstraint(int index)
 {
-    // Iterate through and zero all values
-    int endRow = startRow + nRows;
-    int endCol = startCol + nCols;
-    for (int outer = 0; outer < dst.outerSize(); outer++)
+    // Add the necessary rows and columns
+    addDim<addRow>(mat, rowIndex<fixedConstraintLocation>(index) - 1, 1);
+    addDim<addCol>(mat, colIndex<fixedConstraintForce>(index, twistLength) - 1, twistLength);
+
+    return;
+}
+
+void SystemMatrix::updateFixedConstraints()
+{
+    // Start by clearing the relevant submatrices
+    clearBlock<fixedConstraintForce, true>();
+    clearBlock<fixedConstraintLocation, true>();
+    clearBlock<fixedConstraintActive, true>();
+
+    // Constraint forces are applied to each node with a constraint
+    // We add them regardless of whether they are active.
+    int index = 0;
+    for (auto it = fixedConstraints.cbegin(); it != fixedConstraints.cend(); ++it)
     {
-	auto innerIt = MatrixType::InnerIterator(dst, outer);
-	// Check if the outer is in our range
-	if ((MatrixType::IsRowMajor && innerIt.row() >= startRow && innerIt.row() < endRow) ||
-	    (!MatrixType::IsRowMajor && innerIt.col() >= startCol && innerIt.col() < endCol))
+	// Add the force
+	int row = rowIndex<fixedConstraintForce>(it->node, twistLength);
+	int col = colIndex<fixedConstraintForce>(index, twistLength);
+	for (int i = 0; i < twistLength; i++)
 	{
-	    for (; innerIt; ++innerIt)
+	    mat.coeffRef(row + i, col + i) = 1;
+	}
+	// If active, add the location
+	if (it->active)
+	{
+	    row = rowIndex<fixedConstraintLocation>(index, twistLength);
+	    col = colIndex<fixedConstraintLocation>(it->node, twistLength);
+	    for (int i = 0; i < twistLength; i++)
 	    {
-		// Check if we're past the first row / col
-		if ((MatrixType::IsRowMajor && innerIt.col() >= startCol) ||
-		    (!MatrixType::IsRowMajor && innerIt.row() >= startRow))
-		{
-		    // Check if we're past the last row / col
-		    // Since inners are guaranteed to be ascending, we can break here
-		    if ((MatrixType::IsRowMajor && innerIt.col() >= endCol) ||
-			(!MatrixType::IsRowMajor && innerIt.row() >= endRow))
-		    {
-			break;
-		    }
-		    // Found a value in the block, zero it out
-		    innerIt.valueRef() = 0;
-		}
+		mat.coeffRef(row + i, col + i) = 1;
 	    }
 	}
-    }
-    // Prune if that version of the function is called
-    if constexpr (prune)
-    {
-	auto keepFunc = [&](const Eigen::Index& row, const Eigen::Index& col, const MatrixType::Scalar& value)
+	// Otherwise, add it to the deactivation matrix
+	else
+	{
+	    row = rowIndex<fixedConstraintActive>(index, twistLength);
+	    col = colIndex<fixedConstraintActive>(it->node, twistLength);
+	    for (int i = 0; i < twistLength; i++)
 	    {
-		if ((row >= startRow && row < endRow) &&
-		    (col >= startCol && col < endCol) && value == 0)
-		{
-		    return true;
-		}
-		return false;
-	    };
-	dst.prune(keepFunc);
+		mat.coeffRef(row + i, col + i) = 1;
+	    }
+	}
     }
     return;
 }
 
-template <bool prune>
-void SystemMatrix::copyBlock(const MatrixType& src, MatrixType& dst,
-			     int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
-			     int nRows, int nCols)
+template <SystemMatrix::SubMatrix sub, bool prune>
+void SystemMatrix::clearBlock()
 {
-    // Iterate through and copy all values
-    int endRow = srcStartRow + nRows;
-    int endCol = srcStartCol + nCols;
-    // First, clear the destination block
-    clearBlock<false>(dst, dstStartRow, dstStartCol, nRows, nCols);
-    for (int outer = 0; outer < src.outerSize(); outer++)
-    {
-	auto innerIt = MatrixType::InnerIterator(src, outer);
-	// Check if the outer is in our range
-	if ((MatrixType::IsRowMajor && innerIt.row() >= srcStartRow && innerIt.row() < endRow) ||
-	    (!MatrixType::IsRowMajor && innerIt.col() >= srcStartCol && innerIt.col() < endCol))
-	{
-	    for (; innerIt; ++innerIt)
-	    {
-		// Check if we're past the first row / col
-		if ((MatrixType::IsRowMajor && innerIt.col() >= srcStartCol) ||
-		    (!MatrixType::IsRowMajor && innerIt.row() >= srcStartRow))
-		{
-		    // Check if we're past the last row / col
-		    // Since inners are guaranteed to be ascending, we can break here
-		    if ((MatrixType::IsRowMajor && innerIt.col() >= endCol) ||
-			(!MatrixType::IsRowMajor && innerIt.row() >= endRow))
-		    {
-			break;
-		    }
-		    // Found a value in the src block. Copy it to dst.
-		    dst.coeffRef(innerIt.row(), innerIt.col()) = innerIt.value();
-		}
-	    }
-	}
-    }
-    // Prune if that version of the function is called
-    if constexpr (prune)
-    {
-	int dstEndRow = dstStartRow + nRows;
-	int dstEndCol = dstStartCol + nCols;
-	auto keepFunc = [&](const Eigen::Index& row, const Eigen::Index& col, const MatrixType::Scalar& value)
-	    {
-		if ((row >= dstStartRow && row < dstEndRow) &&
-		    (col >= dstStartCol && col < dstEndCol))
-		{
-		    return false;
-		}
-		return true;
-	    };
-	dst.prune(keepFunc);
-    }
-    return;    
-}   
+    cossolve::clearBlock<prune>(mat, firstRow<sub>(), firstCol<sub>(), nRows<sub>(), nCols<sub>());
+    return;
+}
 
 void SystemMatrix::initStiffnessMatrix(Eigen::Ref<const TwistType> diag)
 {
-    // Reinitializing the stiffness matrix clears the strain matrix
-    clearBlock<true>(mat, firstRow<strain>(), firstCol<strain>(), nRows<strain>(), nCols<strain>());
+    // For now, this just gets put in the EinvKD matrix
+    K = MatrixType(nRows<strain>(), nCols<strain>());
     for (int i = firstCol<strain>(); i <= lastCol<strain>(); i++)
     {
-	mat.coeffRef(i, i) = diag(i % twistLength);
+	K.coeffRef(i, i) = diag(i % twistLength);
     }
-    
     return;
 }
 
 void SystemMatrix::initDerivativeMatrix(const DerivativeMatrixCoefficients& coeffs)
 {
     // We make a temporary copy before multiplying it with the stiffness matrix
-    MatrixType derivativeMatrix(nRows<strain>(), nCols<strain>());
+    D = MatrixType(nRows<strain>(), nCols<strain>());
     int i = firstRow<strain>();
     // First node
     for (; i < rowIndex<strain>(1, twistLength); i++)
     {
-	mat.coeffRef(i, i) = coeffs.firstNodeCurrentCoeff;
-	mat.coeffRef(i, i + twistLength) = coeffs.firstNodeNextCoeff;
+	D.coeffRef(i, i) = coeffs.firstNodeCurrentCoeff;
+	D.coeffRef(i, i + twistLength) = coeffs.firstNodeNextCoeff;
     }
     // Inner nodes
     for (; i < rowIndex<strain>(-1, twistLength); i++)
     {
-	mat.coeffRef(i, i - twistLength) = coeffs.innerNodePrevCoeff;
-	mat.coeffRef(i, i) = coeffs.innerNodeCurrentCoeff;
-	mat.coeffRef(i, i + twistLength) = coeffs.innerNodeNextCoeff;
+	D.coeffRef(i, i - twistLength) = coeffs.innerNodePrevCoeff;
+	D.coeffRef(i, i) = coeffs.innerNodeCurrentCoeff;
+	D.coeffRef(i, i + twistLength) = coeffs.innerNodeNextCoeff;
     }
     // Last node
     for (; i <= lastRow<strain>(); i++)
     {
-	mat.coeffRef(i, i - twistLength) = coeffs.lastNodePrevCoeff;
-	mat.coeffRef(i, i) = coeffs.lastNodeCurrentCoeff;
+	D.coeffRef(i, i - twistLength) = coeffs.lastNodePrevCoeff;
+	D.coeffRef(i, i) = coeffs.lastNodeCurrentCoeff;
     }
-    // Now we multiply the stiffness and derivative matrices together
-    derivativeMatrix = mat.block(firstRow<strain>(), firstCol<strain>(),
-				 nRows<strain>(), nCols<strain>()) * derivativeMatrix;
-    copyBlock<true>(derivativeMatrix, mat, 0, 0, firstRow<strain>(), firstCol<strain>(),
-		    nRows<strain>(), nCols<strain>());
     return;
 }
 
 void SystemMatrix::initIntegralMatrix(const IntegralMatrixCoefficients& coeffs)
 {
-    // We make a temporary copy before multiplying it with the stiffness matrix
-    MatrixType integralMatrix(nRows<strain>(), nCols<strain>());
+    // We don't actually add this to the system matrix yet
+    E = MatrixType(nRows<strain>(), nCols<strain>());
     int i = firstRow<strain>();
     // First node
     for (; i < rowIndex<strain>(1, twistLength); i++)
     {
-	mat.coeffRef(i, i) = coeffs.firstNodeCurrentCoeff;
-	mat.coeffRef(i, i + twistLength) = coeffs.firstNodeNextCoeff;
+	E.coeffRef(i, i) = coeffs.firstNodeCurrentCoeff;
+	E.coeffRef(i, i + twistLength) = coeffs.firstNodeNextCoeff;
     }
     // Inner nodes
     for (; i < rowIndex<strain>(-1, twistLength); i++)
     {
 	int j = firstCol<strain>() + i % twistLength;
-	mat.coeffRef(i, j) = coeffs.innerNodeFirstCoeff;
+	E.coeffRef(i, j) = coeffs.innerNodeFirstCoeff;
 	j += twistLength;
 	for (; j < i - twistLength; j += twistLength)
 	{
-	    mat.coeffRef(i, j) = coeffs.innerNodeIntermediateCoeff;
+	    E.coeffRef(i, j) = coeffs.innerNodeIntermediateCoeff;
 	}
-	mat.coeffRef(i, i - twistLength) = coeffs.innerNodePrevCoeff;
-	mat.coeffRef(i, i) = coeffs.innerNodeCurrentCoeff;
-	mat.coeffRef(i, i + twistLength) = coeffs.innerNodeNextCoeff;
+	// Make sure we don't overwrite the first node
+	if (i - twistLength >= twistLength)
+	{
+	    E.coeffRef(i, i - twistLength) = coeffs.innerNodePrevCoeff;
+	}
+	E.coeffRef(i, i) = coeffs.innerNodeCurrentCoeff;
+	E.coeffRef(i, i + twistLength) = coeffs.innerNodeNextCoeff;
     }
     // Last node
     for (; i <= lastRow<strain>(); i++)
     {
 	int j = firstCol<strain>() + i % twistLength;
-	mat.coeffRef(i, j) = coeffs.lastNodeFirstCoeff;
+	E.coeffRef(i, j) = coeffs.lastNodeFirstCoeff;
 	j += twistLength;
 	for (; j < i - twistLength; j += twistLength)
 	{
-	    mat.coeffRef(i, j) = coeffs.lastNodeIntermediateCoeff;
+	    E.coeffRef(i, j) = coeffs.lastNodeIntermediateCoeff;
 	}
-	mat.coeffRef(i, i - twistLength) = coeffs.lastNodePrevCoeff;
-	mat.coeffRef(i, i) = coeffs.lastNodeCurrentCoeff;
+	E.coeffRef(i, i - twistLength) = coeffs.lastNodePrevCoeff;
+	E.coeffRef(i, i) = coeffs.lastNodeCurrentCoeff;
     }
-    // The integral matrix now gets inverted, multiplied with the strain and derivative
-    // matrices, and then copied into the system matrix.
-    
     return;
 }
 

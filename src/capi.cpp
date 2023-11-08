@@ -4,8 +4,7 @@
 
 #include "capi.h"
 #include "StaticSolver.h"
-
-#include <iostream>
+#include "SolverParameters.h"
 
 extern "C" {
 
@@ -14,8 +13,9 @@ SolverHandle cossolve_createSolver(int nNodes, ScalarType tensileModulus, Scalar
 				   ScalarType momentZ, ScalarType area, ScalarType length,
 				   ScalarType linearDensity)
 {
-    return new cossolve::StaticSolver(nNodes, tensileModulus, poissonRatio, shearModulus, momentX, momentY,
-				momentZ, area, length, linearDensity);
+    cossolve::SolverParameters params(tensileModulus, poissonRatio, shearModulus,
+				      momentX, momentY, momentZ, area, length, linearDensity, nNodes);
+    return new cossolve::StaticSolver(std::move(params));
 }
 
 void cossolve_deleteSolver(SolverHandle handle)
@@ -52,7 +52,7 @@ int cossolve_getNodeCount(SolverHandle handle)
 void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* force, bool bodyFrame)
 {
     reinterpret_cast<cossolve::StaticSolver*>(handle)->addPointForce
-	(s, cossolve::StaticSolver::SingleVectorType(force), bodyFrame);
+	(s, cossolve::TwistType(force), bodyFrame);
 
     return;
 }
