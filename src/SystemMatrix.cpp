@@ -112,6 +112,7 @@ void SystemMatrix::updateFixedConstraints()
 		mat.coeffRef(row + i, col + i) = 1;
 	    }
 	}
+	index++;
     }
     return;
 }

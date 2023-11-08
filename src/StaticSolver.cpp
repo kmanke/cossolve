@@ -190,33 +190,6 @@ void StaticSolver::generateAdjointMatrix()
 
 void StaticSolver::applyForces(ScalarType scaleFactor)
 {
-    CoordType g;
-    SingleMatrixType Adg;
-    forces.setZero();
-    
-    // Apply all external forces
-    for (auto it = externalForces.cbegin(); it != externalForces.cend(); ++it)
-    {
-	Eigen::Ref<const TwistType> force = std::get<0>(*it);
-	const int& node = std::get<1>(*it);
-	const bool& bodyFrame = std::get<2>(*it);
-	
-	if (bodyFrame) // Force can be applied directly with no transformation
-	{
-	    nodeVector(forces, node) = force;
-	}
-	else // Need to rotate from the spatial frame into the body frame
-	{
-	    // Construct a coordinate transformation which only rotates
-	    g.setIdentity();
-	    g.block<3, 3>(0, 0) = gBody[node].block<3, 3>(0, 0);
-	    Adg.setZero();
-	    Adjoint(g, Adg);
-	    nodeVector(forces, node) = Adg.transpose() * force * scaleFactor;
-	}
-    }
-
-    return; 
 }
 
 /*void StaticSolver::applyContactForces()

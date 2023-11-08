@@ -36,6 +36,8 @@ using PointType = Eigen::Vector<ScalarType, 3>;
 using TripletList = std::vector<Eigen::Triplet<ScalarType>>;
 using PairList = std::vector<std::pair<int, ScalarType>>;
 
+using CoordList = std::vector<CoordType>;
+
 } // namespace cossolve
 
 #endif // COSSOLVE_TYPES_H

@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef COSSOLVE_SE3_H
-#define COSSOLVE_SE3_H
+#ifndef COSSOLVE_LIE_GROUP_OPS_H
+#define COSSOLVE_LIE_GROUP_OPS_H
 
 #include <eigen3/Eigen/Eigen>
 #include <cmath>
@@ -69,4 +69,4 @@ void adjoint(Eigen::Ref<const Eigen::Matrix<double, 6, 1>> x, Eigen::Ref<Eigen::
 
 } // namespace cossolve
 
-#endif // COSSOLVE_SE3_H
+#endif // COSSOLVE_LIE_GROUP_OPS_H

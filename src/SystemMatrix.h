@@ -82,6 +82,9 @@ public:
     // constraint number.
     void removeFixedConstraint(int index); // not implemented yet
 
+    // Updates the fixed constraint submatrix to reflect changes.
+    void updateFixedConstraints();
+    
 private:
     // Enum for templated submatrix operations
     enum SubMatrix
@@ -108,9 +111,6 @@ private:
     MatrixType EinvKD; // E^-1*K*D
     MatrixType Af; // Adjoint strain
     MatrixType AfK; // Af*K
-
-    // Updates the fixed constraint submatrix to reflect changes.
-    void updateFixedConstraints();
 
     // Convenience wrapper around clearBlock which clears a submatrix.
     template <SubMatrix sub, bool prune>

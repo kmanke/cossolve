@@ -72,8 +72,9 @@ endif()
 target_include_directories(cossolve PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(cossolve PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_sources(cossolve PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/se3.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/LieGroupOps.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/capi.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/StaticSolver.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/SystemMatrix.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/SystemVector.cpp"
 )

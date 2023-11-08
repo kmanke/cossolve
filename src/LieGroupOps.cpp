@@ -16,8 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "se3.h"
-#include "Solver.h"
+#include "LieGroupOps.h"
 
 #include <iostream>
 
