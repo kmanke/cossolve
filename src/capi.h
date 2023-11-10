@@ -18,15 +18,20 @@ extern "C" {
 				       ScalarType shearModulus, ScalarType momentX, ScalarType momentY,
 				       ScalarType momentZ, ScalarType area, ScalarType length,
 				       ScalarType linearDensity);
+
     // Wrapper to destroy a Solver
     void cossolve_deleteSolver(SolverHandle handle);
+
+    // Wrapper for Solver::addForce
+    void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* force, bool bodyFrame);
+
+    // Wrapper for StaticSolver::addFixedConstraint
+//    void cossolve_Solver_addFixedConstraint(SolverHandle handle, int node, 
+    
     // Fills the passed ScalarType array with the strain vector from this solver
     void cossolve_getStrains(SolverHandle handle, ScalarType* outArray);
     void cossolve_getCoords(SolverHandle handle, ScalarType* outArray);
     int cossolve_getNodeCount(SolverHandle handle);
-
-    // Wrapper for Solver::addForce
-    void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* force, bool bodyFrame);
 
     // Wrapper for Solver::solveStrains
     void cossolve_Solver_solveStrains(SolverHandle handle);

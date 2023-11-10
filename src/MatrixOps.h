@@ -27,6 +27,10 @@
 
 namespace cossolve {
 
+// Returns a block reference into the specified vector.
+Eigen::Ref<VectorType> vectorRef(Eigen::Ref<VectorType> vec, int index, int stride = 1);
+Eigen::Ref<const VectorType> vectorRefConst(Eigen::Ref<const VectorType> vec, int index, int stride = 1);
+
 // Sets all values in the specified block to zero.
 // If prune is true, the block will be pruned after the operation.
 template <bool prune>

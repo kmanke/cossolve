@@ -23,6 +23,7 @@
 #include "CossolveTypes.h"
 #include "Logger.h"
 #include "SystemMatrix.h"
+#include "SystemVector.h"
 #include "SolverParameters.h"
 
 #include <eigen3/Eigen/Eigen>
@@ -30,10 +31,7 @@
 namespace cossolve {
 
 class StaticSolver
-{
-    using ForceEntry = std::tuple<Eigen::Vector<double, 6>, int, bool>;
-    using ForceList = std::list<ForceEntry>;
-    
+{    
 public:
     // This struct contains definitions of several commonly used sizes
     struct Sizes
@@ -70,6 +68,9 @@ public:
     // distributed approximately a segment length apart.
     void addDistributedForce(ScalarType s1, ScalarType s2,
 			     Eigen::Ref<const TwistType> force, bool bodyFrame = true);
+
+    // Adds a fixed constraint to the rod.
+    void addFixedConstraint(int node, Eigen::Ref<const CoordType> g);
     
     // Solves a single solution time step
     void timeStep();
@@ -87,14 +88,12 @@ private:
     // Each list item is a pair with the first item being the force vector
     // and the second a boolean representing whether this force's direction
     // is in the body frame or the spatial frame.
-    ForceList externalForces;
+    ForceList appliedForces;
     ConstraintList fixedConstraints;
     
     // System state
-    VectorType systemVector;
-    VectorType ksi; // ksi(s) is the strain integrated from 0 to s
-    VectorType freeStrains;
-    VectorType forces;
+    SystemVector sysVec;
+    VectorType fStar;
     std::vector<CoordType> gBody; // From body to spatial
     
     // System parameter matrices
@@ -103,51 +102,12 @@ private:
     // Solvers
     SparseLUSolver<MatrixType> sparseLuSolver;
     
-    // Helper functions
-
-    // Returns the index of the first element of the specified node.
-    // If node is < 0, returns the first element of the specified node
-    // counting from the back (starting at the imaginary nth node)
-    inline int nodeIndex(int node) const
-    {
-	return (node >= 0) ? (node * Sizes::entriesPerVector)
-	    : ((params.nNodes() + node) * Sizes::entriesPerVector);
-    }
-    
-    // Returns a reference to the vector associated with the specified node.
-    // If node is < 0, returns the vector counting from the back.
-    inline Eigen::Ref<TwistType> nodeVector(Eigen::Ref<VectorType> vector, int node) const
-    {
-	return vector.block<Sizes::entriesPerVector, 1>(nodeIndex(node), 0);
-    }
-    inline Eigen::Ref<const TwistType> nodeVectorConst(Eigen::Ref<const VectorType> vector, int node) const
-    {
-	return vector.block<Sizes::entriesPerVector, 1>(nodeIndex(node), 0);
-    }
-
-    // Returns a (const) reference to the point defining the origin
-    // of coordinate frame `g`.
-    inline Eigen::Ref<PointType> origin(Eigen::Ref<CoordType> g)
-    {
-	return g.block<Sizes::entriesPerPoint, 1>(0, 3);
-    }
-    inline Eigen::Ref<const PointType> originConst(Eigen::Ref<const CoordType> g)
-    {
-	return g.block<Sizes::entriesPerPoint, 1>(0, 3);
-    }
-    void initStateVectors();
+    // Initializes the coordinate transformations and free strains to initial values.
+    void initCoordinates();
 
     // Regenerates the strain adjoint matrix.
     void generateAdjointMatrix();
         
-    // This function places forces on the beam.
-    // The force is transformed from its actual position s to the nearest node on
-    // the rod.
-    void applyForces(ScalarType scaleFactor);
-
-    // Calculates contact forces with the ground and applies them to the rod
-    void applyContactForces();
-
     // This function generates a coordinate transformation matrix which transforms
     // from the nearest node to s to s.
     // Input:
@@ -171,10 +131,7 @@ private:
 
     // Updates the body coordinate transformations as a result of
     // body deformation.
-    void computeDeformation(int baseNode = 0);
-
-    // Computes the strain along the rod based on the current coordinates.
-    void computeStrainFromCoords(Eigen::Ref<VectorType> dest);
+    void computeDeformation();
 };
 
 } // namespace cossolve

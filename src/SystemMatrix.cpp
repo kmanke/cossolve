@@ -28,7 +28,7 @@ SystemMatrix::SystemMatrix(const SolverParameters& params,
     : params(params), fixedConstraints(fixedConstraints)
 {
     // Allocate the full system matrix but don't initialize yet
-    mat = MatrixType(nRows<system>(), nCols<system>());
+    mat = MatrixType(nDims<SubMatrix::system>(), nDims<SubMatrix::system>());
     return;
 }
 
@@ -40,7 +40,7 @@ void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
 				    SparseLUSolver<MatrixType>& solver)
 {
     // Start by constructing our basic building blocks
-    clearBlock<strain, true>();
+    clearBlock<SubMatrix::twist, SubMatrix::twist, true>();
     initStiffnessMatrix(stiffnessDiag);
     initDerivativeMatrix(derivCoeffs);
     initIntegralMatrix(intCoeffs);
@@ -67,8 +67,8 @@ void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
 void SystemMatrix::addFixedConstraint(int index)
 {
     // Add the necessary rows and columns
-    addDim<addRow>(mat, rowIndex<fixedConstraintLocation>(index) - 1, 1);
-    addDim<addCol>(mat, colIndex<fixedConstraintForce>(index, twistLength) - 1, twistLength);
+    addDim<addRow>(mat, subIndex<SubMatrix::fixed>(index) - 1, 1);
+    addDim<addCol>(mat, subIndex<SubMatrix::fixed>(index, twistLength) - 1, twistLength);
 
     return;
 }
@@ -76,9 +76,9 @@ void SystemMatrix::addFixedConstraint(int index)
 void SystemMatrix::updateFixedConstraints()
 {
     // Start by clearing the relevant submatrices
-    clearBlock<fixedConstraintForce, true>();
-    clearBlock<fixedConstraintLocation, true>();
-    clearBlock<fixedConstraintActive, true>();
+    clearBlock<SubMatrix::twist, SubMatrix::fixed, true>();
+    clearBlock<SubMatrix::strain, SubMatrix::fixed, true>();
+    clearBlock<SubMatrix::fixed, SubMatrix::system, true>();
 
     // Constraint forces are applied to each node with a constraint
     // We add them regardless of whether they are active.
@@ -86,8 +86,8 @@ void SystemMatrix::updateFixedConstraints()
     for (auto it = fixedConstraints.cbegin(); it != fixedConstraints.cend(); ++it)
     {
 	// Add the force
-	int row = rowIndex<fixedConstraintForce>(it->node, twistLength);
-	int col = colIndex<fixedConstraintForce>(index, twistLength);
+	int row = subIndex<SubMatrix::fixed>(it->node, twistLength);
+	int col = subIndex<SubMatrix::fixed>(index, twistLength);
 	for (int i = 0; i < twistLength; i++)
 	{
 	    mat.coeffRef(row + i, col + i) = 1;

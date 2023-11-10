@@ -20,4 +20,10 @@
 
 namespace cossolve {
 
+Eigen::Ref<VectorType> vectorRef(Eigen::Ref<VectorType> vec, int index, int stride)
+{
+    return vec.block((index >= 0) ? (index * stride) : (vec.rows() + index * stride), 0,
+		     stride, 1);
+}
+
 } // namespace cossolve

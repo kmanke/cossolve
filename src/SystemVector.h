@@ -38,11 +38,20 @@ public:
     Eigen::Ref<const VectorType> getStrain() const;
     Eigen::Ref<const VectorType> getFixedConstraintForces() const;
 
+    const VectorType& getLhs() const { return lhs; }
+    const VectorType& getRhs() const { return rhs; }
+
     // Initializes constants which are used in applied force calculations
-    void initAppliedForceConstants(const MatrixType& Einv, const ScalarType fStar0);
+    void initAppliedForceConstants(const MatrixType& Einv, const VectorType& fStar);
+
+    // Initialize the strains to their initial values
+    void initStrains(const VectorType& fStar);
     
     // Updates the fixed constraint in the RHS
     void updateFixedConstraints();
+
+    // Adds a fixed constraint to the system
+    void addFixedConstraint(int index);
 
     // Updates the applied forces in the RHS
     void updateAppliedForces(const MatrixType& EinvKD, const MatrixType& AfK,
@@ -81,7 +90,7 @@ private:
     template <SubVector sub>
     int rowIndex(int index, int stride = 1);
     template <SubVector sub>
-    Eigen::Ref<VectorType> subRef(int index, int length));
+    Eigen::Ref<VectorType> subRef(int index, int length);
 };
 
 // Definition of templated functions

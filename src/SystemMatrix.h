@@ -86,15 +86,9 @@ public:
     void updateFixedConstraints();
     
 private:
+    struct SubMatrix
     // Enum for templated submatrix operations
-    enum SubMatrix
-    {
-	system,
-	strain,
-	fixedConstraintForce,
-	fixedConstraintLocation,
-	fixedConstraintActive
-    };
+    
 
     // Some shared data structures which we make use of
     const SolverParameters& params;
@@ -113,26 +107,18 @@ private:
     MatrixType AfK; // Af*K
 
     // Convenience wrapper around clearBlock which clears a submatrix.
-    template <SubMatrix sub, bool prune>
+    template <SubMatrix row, SubMatrix col, bool prune>
     void clearBlock();
   
     // Helper functions for indexing the various matrix types
     template <SubMatrix sub>
-    int firstRow();
+    int firstIndex();
     template <SubMatrix sub>
-    int firstCol();
+    int lastIndex();
     template <SubMatrix sub>
-    int lastRow();
+    int nDims();
     template <SubMatrix sub>
-    int lastCol();
-    template <SubMatrix sub>
-    int nRows();
-    template <SubMatrix sub>
-    int nCols();
-    template <SubMatrix sub>
-    int rowIndex(int row, int stride = 1);
-    template <SubMatrix sub>
-    int colIndex(int col, int stride = 1);
+    int subIndex(int index, int stride = 1);
     
     // Internal functions
     void initStiffnessMatrix(Eigen::Ref<const TwistType> diag);
@@ -142,27 +128,20 @@ private:
 
 // Definition of templated functions
 template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::firstRow()
+int SystemMatrix::firstIndex()
 {
-    if constexpr (sub == system)
+    if constexpr (sub == SubMatrix::system ||
+		  sub == SubMatrix::twist)
     {
 	return 0;
     }
-    if constexpr (sub == strain)
+    else if constexpr (sub == SubMatrix::strain)
     {
-	return 0;
+	return lastIndex<SubMatrix::twist>() + 1;
     }
-    else if constexpr (sub == fixedConstraintForce)
+    else if constexpr (sub == SubMatrix::fixed)
     {
-	return 0;
-    }
-    else if constexpr (sub == fixedConstraintLocation)
-    {
-	return lastRow<strain>() + 1;
-    }
-    else if constexpr (sub == fixedConstraintActive)
-    {
-	return lastRow<fixedConstraintForce>() + 1;
+	return lastIndex<SubMatrix::strain>() + 1;
     }
     else
     {
@@ -171,68 +150,25 @@ int SystemMatrix::firstRow()
 }
     
 template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::lastRow()
+int SystemMatrix::lastIndex()
 {
-    return firstRow<sub>() + nRows<sub>() - 1;
-}
-
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::firstCol()
-{
-    if constexpr (sub == system)
-    {
-	return 0;
-    }
-    if constexpr (sub == strain)
-    {
-	return 0;
-    }
-    else if constexpr (sub == fixedConstraintForce)
-    {
-	return lastCol<strain>() + 1;
-    }
-    else if constexpr (sub == fixedConstraintLocation)
-    {
-	return 0;
-    }
-    else if constexpr (sub == fixedConstraintActive)
-    {
-	return lastCol<fixedConstraintLocation>() + 1;
-    }
-    else
-    {
-	return 0;
-    }
-}
-
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::lastCol()
-{
-    return firstCol<sub>() + nCols<sub>() - 1;
+    return firstIndex<sub>() + nDims<sub>() - 1;
 }
     
 template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::nRows()
+int SystemMatrix::nDims()
 {
-    if constexpr (sub == system)
+    if constexpr (sub == SubMatrix::system)
     {
-	return nRows<strain>() + nRows<fixedConstraintLocation>();
+	return nDims<SubMatrix::twist>() + nDims<SubMatrix::strain>() + nDims<SubMatrix::fixed>();
     }
-    if constexpr (sub == strain)
+    else if constexpr (sub == SubMatrix::twist || sub == SubMatrix::strain)
     {
 	return params.nNodes() * twistLength;
     }
-    else if constexpr (sub == fixedConstraintForce)
+    else if constexpr (sub == SubMatrix::twist)
     {
-	return params.nNodes() * twistLength;
-    }
-    else if constexpr (sub == fixedConstraintLocation)
-    {
-	return fixedConstraints.size();
-    }
-    else if constexpr (sub == fixedConstraintActive)
-    {
-	return fixedConstraints.size();
+	return fixedConstraints.size() * twistLength;
     }
     else
     {
@@ -241,44 +177,9 @@ int SystemMatrix::nRows()
 }
     
 template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::nCols()
+int SystemMatrix::subIndex(int index, int stride)
 {
-    if constexpr (sub == system)
-    {
-	return nCols<strain>() + nCols<fixedConstraintForce>();
-    }
-    else if constexpr (sub == strain)
-    {
-	return params.nNodes() * twistLength;
-    }
-    else if constexpr (sub == fixedConstraintForce)
-    {
-	return fixedConstraints.size();
-    }
-    else if constexpr (sub == fixedConstraintLocation)
-    {
-	return params.nNodes() * twistLength;
-    }
-    else if constexpr (sub == fixedConstraintActive)
-    {
-	return fixedConstraints.size();
-    }
-    else
-    {
-	return 0;
-    }
-}
-
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::rowIndex(int row, int stride)
-{
-    return (row >= 0) ? (firstRow<sub>() + row*stride) : (lastRow<sub>() + 1 + row*stride);
-}
-
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::colIndex(int col, int stride)
-{
-    return (col >= 0) ? (firstCol<sub>() + col*stride) : (lastCol<sub>() + 1 + col*stride);
+    return (index >= 0) ? (firstIndex<sub>() + index*stride) : (lastIndex<sub>() + 1 + index*stride);
 }
 
 } // namespace cossolve

@@ -17,22 +17,25 @@
  */
 
 #include "StaticSolver.h"
-#include "se3.h"
+#include "LieGroupOps.h"
+#include "MatrixOps.h"
 
-#include <chrono>
-#include <iostream>
 #include <eigen3/unsupported/Eigen/MatrixFunctions>
+
+#include <iostream>
 
 namespace cossolve {
 
 StaticSolver::StaticSolver(SolverParameters&& params)
     : params(std::move(params)), sysMat(this->params, fixedConstraints),
+      sysVec(this->params, appliedForces, fixedConstraints),
       logger(std::cout)
 {
     logger.log<LogLevel::info>() << "Initializing solver with " << params.nNodes() << " nodes.";
     logger.startTimer("initialization");
 
-    // Data structures for initialization
+    // Initialize data structures
+    initCoordinates();
     TwistType stiffnessDiag
 	{ params.tensileModulus() * params.area(), params.shearModulus() * params.area(),
 	  params.shearModulus() * params.area(), params.shearModulus() * params.momentX(),
@@ -46,8 +49,16 @@ StaticSolver::StaticSolver(SolverParameters&& params)
 	  1, 2, 2, 5.0/3, 1.0/3, // Inner node coefficients
 	  1, 2, 2, 1 };          // Last node coefficients
     sysMat.initStrainMatrix(stiffnessDiag, derivCoeffs, intCoeffs, sparseLuSolver);
+    sysVec.initAppliedForceConstants(sysMat.getEinv(), fStar);
+    sysVec.initStrains(fStar);
+
+    CoordType(g) = CoordType::Identity();
+    g(0, 3) = 0.25;
+    addFixedConstraint(1, g);
+
     logger.log() << '\n' << Eigen::MatrixXd(sysMat.getMat());
-    initStateVectors();
+    logger.log() << '\n' << sysVec.getLhs();
+    logger.log() << '\n' << sysVec.getRhs();
     
     logger.endTimer();
 
@@ -62,7 +73,7 @@ void StaticSolver::addForce(ScalarType s, Eigen::Ref<const TwistType> force, boo
 {
     // First, transform the force to its nearest node
     CoordType g;
-    ForceEntry newForce;
+    ForceListEntry newForce;
     g.setZero();
     int node = intermediateTransform(s, g);
 
@@ -71,12 +82,11 @@ void StaticSolver::addForce(ScalarType s, Eigen::Ref<const TwistType> force, boo
     Adg.setZero();
     Adjoint(g.inverse(), Adg);
 
-    // Fill in the tuple and move it over
-    std::get<0>(newForce) = Adg.transpose() * force;
-    std::get<1>(newForce) = node;
-    std::get<2>(newForce) = bodyFrame;
-    logger.log() << std::get<0>(newForce);
-    externalForces.emplace_back(std::move(newForce));
+    // Fill in the entry and move it over
+    newForce.force = Adg.transpose() * force;
+    newForce.node = node;
+    newForce.bodyFrame = bodyFrame;
+    appliedForces.emplace_back(std::move(newForce));
     
     return;
 }
@@ -98,7 +108,7 @@ void StaticSolver::addPointForce(ScalarType s, Eigen::Ref<const TwistType> force
 }
 
 void StaticSolver::addDistributedForce(ScalarType s1, ScalarType s2,
-				 Eigen::Ref<const TwistType> force, bool bodyFrame)
+				       Eigen::Ref<const TwistType> force, bool bodyFrame)
 {
     // First deal with the leftmost node
     int leftNode = std::round(s1 / params.ds());
@@ -125,6 +135,24 @@ void StaticSolver::addDistributedForce(ScalarType s1, ScalarType s2,
     return;
 }
 
+void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
+{
+    ConstraintListEntry constraint;
+    constraint.active = true;
+    constraint.node = node;
+    constraint.g = g;
+
+    fixedConstraints.emplace_back(std::move(constraint));
+
+    // System needs to be updated with the new constraints
+    sysVec.addFixedConstraint(fixedConstraints.size() - 1);
+    sysMat.addFixedConstraint(fixedConstraints.size() - 1);
+    sysVec.updateFixedConstraints();
+    sysMat.updateFixedConstraints();
+    
+    return;
+}
+
 void StaticSolver::timeStep()
 {
 //    applyForces(1);
@@ -135,37 +163,32 @@ void StaticSolver::timeStep()
     return;
 }
 
-void StaticSolver::initStateVectors()
+void StaticSolver::initCoordinates()
 {
-    //strains = VectorType::Zero(Sizes::entriesPerVector * nDims);
-    //freeStrains = VectorType::Zero(Sizes::entriesPerVector * nDims);
-    //forces = VectorType::Zero(Sizes::entriesPerVector * nDims);
+    fStar = VectorType::Zero(twistLength * params.nNodes());
     gBody = std::vector<CoordType>(params.nNodes());
-    //contactNodes.reserve(params.nNodes());
-    
-    Eigen::Vector<ScalarType, 4> p {0, 0, 0, 1};
+
+    // Initialize coordinate transformations
+    Eigen::Vector<ScalarType, 3> p {0, 0, 0};
     for (auto gBodyIt = gBody.begin(); gBodyIt != gBody.end(); ++gBodyIt)
     {
-	*gBodyIt = CoordType::Zero();
-	(*gBodyIt).block<3, 3>(0, 0).setIdentity();
-	(*gBodyIt).block<4, 1>(0, 3) = p;
+	*gBodyIt = CoordType::Identity();
+	(*gBodyIt).block<3, 1>(0, 3) = p;
 
 	p(0) += params.length() / params.nSegments();
     }
 
     // Compute free strains based on initial geometry
+    CoordType fHat;
     for (int i = 0; i < (params.nNodes() - 1); i++)
     {
+	fHat = ((gBody[0].inverse()*gBody[i+1]).log() - (gBody[0].inverse()*gBody[i]).log()) / params.ds();
 	CoordType dg = (gBody[i+1] - gBody[i]) / params.ds();
-	se3unhat(gBody[i].inverse()*dg, nodeVector(freeStrains, i));
+	//se3unhat(gBody[i].inverse()*dg, vectorRef(fStar, i, twistLength));
+	se3unhat(fHat, vectorRef(fStar, i, twistLength));
     }
     // Set the free strain of the end to be the same as the previous node
-    nodeVector(freeStrains, -2) = nodeVector(freeStrains, -3);
-    nodeVector(freeStrains, -1) = nodeVector(freeStrains, -3);
-    
-    // Initial strains are just set to free strains
-    //strains = freeStrains;
-
+    vectorRef(fStar, -1, twistLength) = vectorRef(fStar, -2, twistLength);
     return;
 }
 
@@ -187,53 +210,6 @@ void StaticSolver::generateAdjointMatrix()
     }
     return;
 }
-
-void StaticSolver::applyForces(ScalarType scaleFactor)
-{
-}
-
-/*void StaticSolver::applyContactForces()
-{
-    static constexpr ScalarType floorHeight = -100;
-    // Find areas which are below the ground
-    contactNodes.clear();
-    for (int node = 0; node < nNodes; node++)
-    {
-	ScalarType clearance = origin(gBody[node])(2) - floorHeight;
-	if (clearance < 0)
-	{
-	    logger.log() << "Contact detected at node " << node;
-	    contactNodes.emplace_back(node);
-	    // Shift the point until it is coincident with the floor
-	    origin(gBody[node])(2) = floorHeight;
-	}
-    }
-    VectorType impliedStrains = VectorType::Zero(Sizes::entriesPerVector * nDims);
-    computeStrainFromCoords(impliedStrains);
-    nodeVector(impliedStrains, -1) = nodeVectorConst(strains, -1);
-    nodeVector(impliedStrains, -2) = nodeVectorConst(strains, -2);
-    // Recalculate forces implied by these strains
-    //VectorType impliedForces = -((EinvKD - AfK)*impliedStrains + AfK*freeStrains);
-    VectorType impliedForces = VectorType::Zero(Sizes::entriesPerVector * nDims);
-    for (int node = 0; node < nNodes; node++)
-    {
-	nodeVector(impliedForces, node) = AfK.block(nodeIndex(node), nodeIndex(node), 6, 6)*(nodeVector(impliedStrains, node) - nodeVector(freeStrains, node))
-	    - K.block(nodeIndex(node), nodeIndex(node), 6, 6)*(nodeVector(impliedStrains, node+1) - nodeVector(impliedStrains, node))/ds;
-    }
-    // For each node in contact, replace the total force with the implied force
-    for (auto it = contactNodes.cbegin(); it != contactNodes.cend(); ++it)
-    {
-	nodeVector(forces, *it) = nodeVectorConst(impliedForces, *it);
-    }
-    Eigen::MatrixX<ScalarType> comparison = Eigen::MatrixX<ScalarType>(6 * nDims, 4);
-    comparison.col(0) = strains;
-    comparison.col(1) = impliedStrains;
-    comparison.col(2) = strains - impliedStrains;
-    comparison.col(3) = impliedForces;
-    logger.log() << "Implied strains:\n" << comparison;
-
-    return;
-    }*/
 
 int StaticSolver::intermediateTransform(ScalarType s, Eigen::Ref<CoordType> g) const
 {
@@ -280,7 +256,7 @@ void StaticSolver::intermediateStrainIntegral(ScalarType s1, ScalarType s2, Eige
 void StaticSolver::nodalStrainIntegral(int node1, int node2, Eigen::Ref<TwistType> result) const
 {
     VectorType strains(twistLength * (params.nNodes() + 1));
-    while (node1 < node2)
+/*    while (node1 < node2)
     {
 	if (node1 == 0) // First node
 	{
@@ -298,12 +274,13 @@ void StaticSolver::nodalStrainIntegral(int node1, int node2, Eigen::Ref<TwistTyp
 	    result += params.ds()*(1.0/6.0*(fnext - fprev) + 11.0/12.0*fk + 1.0/12.0*fnext2);
 	}
 	node1++;
-    }
+	}*/
     return;
 }
 
 void StaticSolver::relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<TwistType> result, bool subtract) const
 {
+    /*
     VectorType strains(twistLength * (params.nNodes() + 1));
     if (node == 0) // Special case for the first segment
     {
@@ -321,7 +298,7 @@ void StaticSolver::relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<Twi
 	Eigen::Ref<const TwistType> fnext2 = nodeVectorConst(strains, node + 2);
 	result += (subtract ? -1 : 1) * (x*fk + x*x/(4*params.ds())*(fnext - fprev) + x*x*x/(12*params.ds()*params.ds())*(fnext2 - fk + fnext - fprev));
     }
-    // If node >= nNodes - 1, then we're at the tip, so do nothing at all
+    // If node >= nNodes - 1, then we're at the tip, so do nothing at all */
     return;
 }
 
@@ -352,11 +329,11 @@ void StaticSolver::computeStrains()
     return;
 }
 
-void StaticSolver::computeDeformation(int baseNode)
+void StaticSolver::computeDeformation()
 {
     TwistType integratedStrain;
     CoordType integratedStrainHat = CoordType::Zero();
-    for (int node = baseNode - 1; node >= 0; node--)
+/*    for (int node = baseNode - 1; node >= 0; node--)
     {
 	integratedStrain.setZero();
 	nodalStrainIntegral(node, node + 1, integratedStrain);
@@ -369,24 +346,7 @@ void StaticSolver::computeDeformation(int baseNode)
 	nodalStrainIntegral(node - 1, node, integratedStrain);
 	se3hat(integratedStrain, integratedStrainHat);
 	gBody[node] = gBody[node-1]*integratedStrainHat.exp();
-    }
-    return;
-}
-
-void StaticSolver::computeStrainFromCoords(Eigen::Ref<VectorType> dest)
-{
-    // Do a forward difference for the first
-    CoordType strainHat = CoordType::Zero();
-    strainHat = gBody[0].inverse() * (gBody[1] - gBody[0]) / params.ds();
-    se3unhat(strainHat, nodeVector(dest, 0));
-    for (int node = 1; node < (params.nNodes() - 1); node++)
-    {
-	strainHat = gBody[node].inverse() * (gBody[node+1] - gBody[node-1]) / (2 * params.ds());
-	se3unhat(strainHat, nodeVector(dest, node));
-    }
-    strainHat = gBody[params.nNodes()-1].inverse() * (gBody[params.nNodes()-1] - gBody[params.nNodes()-2]) / params.ds();
-    se3unhat(strainHat, nodeVector(dest, params.nNodes()-1));
-
+	}*/
     return;
 }
 

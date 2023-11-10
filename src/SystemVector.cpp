@@ -34,12 +34,18 @@ SystemVector::SystemVector(const SolverParameters& params, const ForceList& appl
     return;
 }
 
-void SystemVector::initAppliedForceConstants(const MatrixType& Einv, const ScalarType fStar0)
+void SystemVector::initAppliedForceConstants(const MatrixType& Einv, const VectorType& fStar)
 {
-    EinvfStar0 = VectorType::Ones(nRows<SubVector::appliedForce>());
+    EinvfStar0 = fStar;
     EinvfStar0 *= (2.0 / params.ds());
     EinvfStar0 = Einv * EinvfStar0;
 
+    return;
+}
+
+void SystemVector::initStrains(const VectorType& fStar)
+{
+    subRef<SubVector::strain>(0, nRows<SubVector::strain>()) = fStar;
     return;
 }
 
@@ -95,6 +101,23 @@ void SystemVector::updateFixedConstraints()
 	}
 	index++;
     }
+    return;
+}
+
+void SystemVector::addFixedConstraint(int index)
+{
+    // We need to expand our vectors
+    VectorType newLhs = VectorType(nRows<SubVector::lhs>());
+    VectorType newRhs = VectorType(nRows<SubVector::rhs>());
+    int topCount = rowIndex<SubVector::fixedConstraintForce>(index, twistLength);
+    int bottomCount = lhs.rows() - rowIndex<SubVector::fixedConstraintForce>(index, twistLength);
+    newLhs.topRows(topCount) = lhs.topRows(topCount);
+    newLhs.bottomRows(bottomCount) = lhs.bottomRows(bottomCount);
+
+    // Move it over
+    lhs = std::move(newLhs);
+    rhs = std::move(newRhs);
+
     return;
 }
 
