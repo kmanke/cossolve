@@ -20,24 +20,16 @@
 #include "MatrixOps.h"
 
 #include <iostream>
+#include <cassert>
 
 namespace cossolve {
 
-SystemMatrix::SystemMatrix(const SolverParameters& params,
-			   const ConstraintList& fixedConstraints)
-    : params(params), fixedConstraints(fixedConstraints)
-{
-    // Allocate the full system matrix but don't initialize yet
-    mat = MatrixType(nDims<SubMatrix::system>(), nDims<SubMatrix::system>());
-    return;
-}
 
-SystemMatrix::~SystemMatrix() { }
-
+/*
 void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
 				    const DerivativeMatrixCoefficients& derivCoeffs,
 				    const IntegralMatrixCoefficients& intCoeffs,
-				    SparseLUSolver<MatrixType>& solver)
+				    SparseLUSolver<SparseType>& solver)
 {
     // Start by constructing our basic building blocks
     clearBlock<SubMatrix::twist, SubMatrix::twist, true>();
@@ -47,7 +39,7 @@ void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
 
     // The integral matrix now gets inverted, multiplied with the strain and derivative
     // matrices, and then copied into the system matrix.
-    MatrixType I = MatrixType(E.rows(), E.cols());
+    SparseType I = SparseType(E.rows(), E.cols());
     I.setIdentity();
     solver.compute(E);
     Einv = E;
@@ -58,8 +50,8 @@ void SystemMatrix::initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
 		     nRows<strain>(), nCols<strain>());
 
     // We no longer need the D or E matrices, so we can release them
-    D = MatrixType();
-    E = MatrixType();
+    D = SparseType();
+    E = SparseType();
 
     return;
 }
@@ -127,7 +119,7 @@ void SystemMatrix::clearBlock()
 void SystemMatrix::initStiffnessMatrix(Eigen::Ref<const TwistType> diag)
 {
     // For now, this just gets put in the EinvKD matrix
-    K = MatrixType(nRows<strain>(), nCols<strain>());
+    K = SparseType(nRows<strain>(), nCols<strain>());
     for (int i = firstCol<strain>(); i <= lastCol<strain>(); i++)
     {
 	K.coeffRef(i, i) = diag(i % twistLength);
@@ -138,7 +130,7 @@ void SystemMatrix::initStiffnessMatrix(Eigen::Ref<const TwistType> diag)
 void SystemMatrix::initDerivativeMatrix(const DerivativeMatrixCoefficients& coeffs)
 {
     // We make a temporary copy before multiplying it with the stiffness matrix
-    D = MatrixType(nRows<strain>(), nCols<strain>());
+    D = SparseType(nRows<strain>(), nCols<strain>());
     int i = firstRow<strain>();
     // First node
     for (; i < rowIndex<strain>(1, twistLength); i++)
@@ -165,7 +157,7 @@ void SystemMatrix::initDerivativeMatrix(const DerivativeMatrixCoefficients& coef
 void SystemMatrix::initIntegralMatrix(const IntegralMatrixCoefficients& coeffs)
 {
     // We don't actually add this to the system matrix yet
-    E = MatrixType(nRows<strain>(), nCols<strain>());
+    E = SparseType(nRows<strain>(), nCols<strain>());
     int i = firstRow<strain>();
     // First node
     for (; i < rowIndex<strain>(1, twistLength); i++)
@@ -205,6 +197,6 @@ void SystemMatrix::initIntegralMatrix(const IntegralMatrixCoefficients& coeffs)
 	E.coeffRef(i, i) = coeffs.lastNodeCurrentCoeff;
     }
     return;
-}
+    }*/
 
 } // namespace cossolve

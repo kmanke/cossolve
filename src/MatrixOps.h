@@ -27,138 +27,54 @@
 
 namespace cossolve {
 
+// Convenience function to calculate indices within matrices or vectors.
+// The returned value is `index` * `stride` + `offset`.
+// If index is less than 0, then the function returns the index relative to
+// the end. `endIndex` must be provided in this case.
+inline int getIndex(int index, int stride = 1, int offset = 0, int endIndex = 0)
+{
+    return (index < 0) ? (endIndex + index*stride + offset) : index*stride + offset;
+}
+
 // Returns a block reference into the specified vector.
 Eigen::Ref<VectorType> vectorRef(Eigen::Ref<VectorType> vec, int index, int stride = 1);
 Eigen::Ref<const VectorType> vectorRefConst(Eigen::Ref<const VectorType> vec, int index, int stride = 1);
 
 // Sets all values in the specified block to zero.
-// If prune is true, the block will be pruned after the operation.
-template <bool prune>
-void clearBlock(MatrixType& dst, int startRow, int startCol, int nRows, int nCols);
+template <typename Matrix>
+void clearBlock(Matrix& dst, int startRow, int startCol, int nRows, int nCols);
+
+// Prunes all zero-valued entries in the specified block.
+void pruneBlock(SparseType& dst, int startRow, int startCol, int nRows, int nCols);
 
 // Sets all values in the specified block to the values in the
 // reference matrix.
 // If `prune` is true, the block will be pruned after the operation.
-template <bool prune>
-void copyBlock(const MatrixType& src, MatrixType& dst,
+template <typename Matrix>
+void copyBlock(const Matrix& src, Matrix& dst,
 	       int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
 	       int nRows, int nCols);
 
 // Adds `nDims` starting after `afterDim` (which can be -1 to insert at the top / left)
-enum AddDimType { addRow, addCol };
-template <AddDimType dim>
-void addDim(MatrixType& src, int afterDim, int nDims);
+enum class AddDimType { row, col };
+template <AddDimType dim, typename Matrix>
+void addDim(Matrix& src, int afterDim, int nDims);
+
+template <typename Matrix>
+void addBlock(const Matrix& src, Matrix& dst,
+	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+	      int nRows, int nCols);
 
 // Implementation of templated functions follows.
-template <bool prune>
-void clearBlock(MatrixType& dst, int startRow, int startCol, int nRows, int nCols)
-{
-    // Iterate through and zero all values
-    int endRow = startRow + nRows;
-    int endCol = startCol + nCols;
-    for (int outer = 0; outer < dst.outerSize(); outer++)
-    {
-	auto innerIt = MatrixType::InnerIterator(dst, outer);
-	// Check if the outer is in our range
-	if ((MatrixType::IsRowMajor && innerIt.row() >= startRow && innerIt.row() < endRow) ||
-	    (!MatrixType::IsRowMajor && innerIt.col() >= startCol && innerIt.col() < endCol))
-	{
-	    for (; innerIt; ++innerIt)
-	    {
-		// Check if we're past the first row / col
-		if ((MatrixType::IsRowMajor && innerIt.col() >= startCol) ||
-		    (!MatrixType::IsRowMajor && innerIt.row() >= startRow))
-		{
-		    // Check if we're past the last row / col
-		    // Since inners are guaranteed to be ascending, we can break here
-		    if ((MatrixType::IsRowMajor && innerIt.col() >= endCol) ||
-			(!MatrixType::IsRowMajor && innerIt.row() >= endRow))
-		    {
-			break;
-		    }
-		    // Found a value in the block, zero it out
-		    innerIt.valueRef() = 0;
-		}
-	    }
-	}
-    }
-    // Prune if that version of the function is called
-    if constexpr (prune)
-    {
-	auto keepFunc = [&](const Eigen::Index& row, const Eigen::Index& col, const MatrixType::Scalar& value)
-	    {
-		if ((row >= startRow && row < endRow) &&
-		    (col >= startCol && col < endCol) && value == 0)
-		{
-		    return true;
-		}
-		return false;
-	    };
-	dst.prune(keepFunc);
-    }
-    return;
-}
 
-template <bool prune>
-void copyBlock(const MatrixType& src, MatrixType& dst,
-	       int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
-	       int nRows, int nCols)
-{
-    // Iterate through and copy all values
-    int endRow = srcStartRow + nRows;
-    int endCol = srcStartCol + nCols;
-    // First, clear the destination block
-    clearBlock<false>(dst, dstStartRow, dstStartCol, nRows, nCols);
-    for (int outer = 0; outer < src.outerSize(); outer++)
-    {
-	auto innerIt = MatrixType::InnerIterator(src, outer);
-	// Check if the outer is in our range
-	if ((MatrixType::IsRowMajor && innerIt.row() >= srcStartRow && innerIt.row() < endRow) ||
-	    (!MatrixType::IsRowMajor && innerIt.col() >= srcStartCol && innerIt.col() < endCol))
-	{
-	    for (; innerIt; ++innerIt)
-	    {
-		// Check if we're past the first row / col
-		if ((MatrixType::IsRowMajor && innerIt.col() >= srcStartCol) ||
-		    (!MatrixType::IsRowMajor && innerIt.row() >= srcStartRow))
-		{
-		    // Check if we're past the last row / col
-		    // Since inners are guaranteed to be ascending, we can break here
-		    if ((MatrixType::IsRowMajor && innerIt.col() >= endCol) ||
-			(!MatrixType::IsRowMajor && innerIt.row() >= endRow))
-		    {
-			break;
-		    }
-		    // Found a value in the src block. Copy it to dst.
-		    dst.coeffRef(innerIt.row(), innerIt.col()) = innerIt.value();
-		}
-	    }
-	}
-    }
-    // Prune if that version of the function is called
-    if constexpr (prune)
-    {
-	int dstEndRow = dstStartRow + nRows;
-	int dstEndCol = dstStartCol + nCols;
-	auto keepFunc = [&](const Eigen::Index& row, const Eigen::Index& col, const MatrixType::Scalar& value)
-	    {
-		if ((row >= dstStartRow && row < dstEndRow) &&
-		    (col >= dstStartCol && col < dstEndCol))
-		{
-		    return false;
-		}
-		return true;
-	    };
-	dst.prune(keepFunc);
-    }
-    return;    
-}
+// Anonymous namespace for specializations of addDim
+namespace {
 
 template <AddDimType dim>
-void addDim(MatrixType& dst, int afterDim, int nDims)
+void addDimSparse(SparseType& dst, int afterDim, int nDims)
 {
-    // Start by resizing the matrix to add the rows
-    if constexpr (dim == addRow)
+        // Start by resizing the matrix to add the rows
+    if constexpr (dim == AddDimType::row)
     {
 	dst.conservativeResize(dst.rows() + nDims, dst.cols());
     }
@@ -168,12 +84,12 @@ void addDim(MatrixType& dst, int afterDim, int nDims)
     }
     // If the we're adding to the inner dimension, we simply add nRows to any inner indices which are
     // greater than `afterDim`.
-    if constexpr ((!MatrixType::IsRowMajor && dim == addRow) ||
-		  (MatrixType::IsRowMajor && dim == addCol))
+    if constexpr ((!SparseType::IsRowMajor && dim == AddDimType::row) ||
+		  (SparseType::IsRowMajor && dim == AddDimType::col))
     {
-	MatrixType::StorageIndex* innerPtr = dst.innerIndexPtr();
+	SparseType::StorageIndex* innerPtr = dst.innerIndexPtr();
 	// The one-past-the-end outer start points to one-past-the-end of the inner indices.
-	MatrixType::StorageIndex* innerEnd = innerPtr + dst.outerIndexPtr()[dst.outerSize()];
+	SparseType::StorageIndex* innerEnd = innerPtr + dst.outerIndexPtr()[dst.outerSize()];
 	while (innerPtr < innerEnd)
 	{
 	    if (*innerPtr > afterDim)
@@ -187,8 +103,8 @@ void addDim(MatrixType& dst, int afterDim, int nDims)
     // the back.
     else
     {
-	MatrixType::StorageIndex* outerPtr = dst.outerIndexPtr();
-	MatrixType::StorageIndex* nnzPtr = dst.innerNonZeroPtr();
+	SparseType::StorageIndex* outerPtr = dst.outerIndexPtr();
+	SparseType::StorageIndex* nnzPtr = dst.innerNonZeroPtr();
 	// First, repoint the outers after the inserted dims
 	for (int i = dst.outerSize() - 1; i > afterDim + nDims; i--)
 	{
@@ -210,6 +126,41 @@ void addDim(MatrixType& dst, int afterDim, int nDims)
     }
     return;
 }
+
+template <AddDimType dim>
+void addDimDense(DenseType& dst, int afterDim, int nDims)
+{
+    if constexpr (dim == AddDimType::row)
+    {
+	DenseType temp = dst.block(afterDim + 1, 0, dst.rows() - (afterDim + 1), dst.cols());
+	dst.conservativeResize(dst.rows() + nDims, dst.cols());
+	dst.bottomRows(dst.rows() - (afterDim + 1)) = temp;
+    }
+    else if constexpr (dim == AddDimType::col)
+    {
+	DenseType temp = dst.block(0, afterDim + 1, dst.rows(), dst.cols() - (afterDim + 1));
+	dst.conservativeResize(dst.rows(), dst.cols() + nDims);
+	dst.rightCols(dst.cols() - (afterDim + 1)) = temp;
+    }
+    return;
+}
+
+} // End anonymous namespace
+
+template <AddDimType dim, typename Matrix>
+void addDim(Matrix& dst, int afterDim, int nDims)
+{
+    if constexpr (std::is_same_v<Matrix, SparseType>)
+    {
+	addDimSparse<dim>(dst, afterDim, nDims);
+    }
+    else if constexpr (std::is_same_v<Matrix, DenseType>)
+    {
+	addDimDense<dim>(dst, afterDim, nDims);
+    }
+    return;
+}
+
 
 } // namespace cossolve
     

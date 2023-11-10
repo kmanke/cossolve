@@ -26,4 +26,130 @@ Eigen::Ref<VectorType> vectorRef(Eigen::Ref<VectorType> vec, int index, int stri
 		     stride, 1);
 }
 
+// Specialization of `clearBlock` for sparse matrices.
+template <>
+void clearBlock<SparseType>(SparseType& dst, int startRow, int startCol, int nRows, int nCols)
+{
+    // Iterate through and zero all values
+    int startOuter = (SparseType::IsRowMajor) ? startRow : startCol;
+    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
+    int startInner = (SparseType::IsRowMajor) ? startCol : startRow;
+    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+
+    for (int outer = startOuter; outer < endOuter; outer++)
+    {
+	for (auto innerIt = SparseType::InnerIterator(dst, outer); innerIt; ++innerIt)
+	{
+	    // Check if we're past the first row / col
+	    if (innerIt.index() >= startInner)
+	    {
+		    // Check if we're past the last row / col
+		    // Since inners are guaranteed to be ascending, we can break here
+		if (innerIt.index() >= endInner)
+		{
+		    break;
+		}
+		// Found a value in the block, zero it out
+		innerIt.valueRef() = 0;
+	    }
+	}
+    }
+    return;
+}
+
+// Specialization of `clearBlock` for dense matrices.
+template <>
+void clearBlock<DenseType>(DenseType& dst, int startRow, int startCol, int nRows, int nCols)
+{
+    dst.block(startRow, startCol, nRows, nCols).setZero();
+    return;
+}
+
+// Specialization of `copyBlock` for sparse matrices
+template<>
+void copyBlock<SparseType>(const SparseType& src, SparseType& dst,
+	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+	      int nRows, int nCols)
+{
+    int startOuter = (SparseType::IsRowMajor) ? srcStartRow : srcStartCol;
+    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
+    int startInner = (SparseType::IsRowMajor) ? srcStartCol : srcStartRow;
+    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+    clearBlock(dst, dstStartRow, dstStartCol, nRows, nCols);
+    for (int outer = startOuter; outer < endOuter; outer++)
+    {
+	for (auto innerIt = SparseType::InnerIterator(src, outer); innerIt; ++innerIt)
+	{
+	    // Check if we're past the first row / col
+	    if (innerIt.index() >= startInner)
+	    {	
+		// Check if we're past the last row / col
+		// Since inners are guaranteed to be ascending, we can break here
+		if (innerIt.index() >= endInner)
+		{
+		    break;
+		}
+		// Found a value in the src block. Add it to dst.
+		dst.coeffRef(innerIt.row(), innerIt.col()) = innerIt.value();
+	    }
+	}
+    }
+    return;
+}
+
+// Specialization of `copyblock` for dense matrices.
+template<>
+void copyBlock<DenseType>(const DenseType& src, DenseType& dst,
+	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+	      int nRows, int nCols)
+{
+    dst.block(dstStartRow, dstStartCol, nRows, nCols) =
+	src.block(srcStartRow, srcStartCol, nRows, nCols);
+    return;
+}
+
+// Specialization of `addBlock` for sparse matrices.
+template<>
+void addBlock<SparseType>(const SparseType& src, SparseType& dst,
+			  int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+			  int nRows, int nCols)
+{
+    // Iterate through and add all values from src
+    int startOuter = (SparseType::IsRowMajor) ? srcStartRow : srcStartCol;
+    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
+    int startInner = (SparseType::IsRowMajor) ? srcStartCol : srcStartRow;
+    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+
+    for (int outer = startOuter; outer < endOuter; outer++)
+    {
+	for (auto innerIt = SparseType::InnerIterator(src, outer); innerIt; ++innerIt)
+	{
+	    // Check if we're past the first row / col
+	    if (innerIt.index() >= startInner)
+	    {	
+		// Check if we're past the last row / col
+		// Since inners are guaranteed to be ascending, we can break here
+		if (innerIt.index() >= endInner)
+		{
+		    break;
+		}
+		// Found a value in the src block. Add it to dst.
+		dst.coeffRef(innerIt.row(), innerIt.col()) += innerIt.value();
+	    }
+	}
+    }
+    return;
+}
+
+// Specialization of `addBlock` for dense matrices.
+template<>
+void addBlock<DenseType>(const DenseType& src, DenseType& dst,
+			  int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+			  int nRows, int nCols)
+{
+    dst.block(dstStartRow, dstStartCol, nRows, nCols) +=
+	src.block(srcStartRow, srcStartCol, nRows, nCols);
+    return;
+}
+
 } // namespace cossolve

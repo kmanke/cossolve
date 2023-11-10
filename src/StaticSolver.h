@@ -23,8 +23,9 @@
 #include "CossolveTypes.h"
 #include "Logger.h"
 #include "SystemMatrix.h"
-#include "SystemVector.h"
+//#include "SystemVector.h"
 #include "SolverParameters.h"
+#include "ForceList.h"
 
 #include <eigen3/Eigen/Eigen>
 
@@ -92,15 +93,24 @@ private:
     ConstraintList fixedConstraints;
     
     // System state
-    SystemVector sysVec;
+    SystemMatrix<DenseType> lhs;
+    SystemMatrix<DenseType> rhs;
     VectorType fStar;
     std::vector<CoordType> gBody; // From body to spatial
     
     // System parameter matrices
-    SystemMatrix sysMat;
+    SystemMatrix<SparseType> mat; // Full system matrix
+    SparseType K; // Stiffness matrix
+    SparseType Kinv; // K^-1
+    SparseType E; // Twist integral
+    SparseType D; // Twist derivative
+    SparseType Eprime; // Strain integral
+    SparseType Dprime; // Derivative
+    SparseType Af; // Adjoint matrix
+    SparseType AfK; // Af * K
 
     // Solvers
-    SparseLUSolver<MatrixType> sparseLuSolver;
+    SparseLUSolver<SparseType> sparseLuSolver;
     
     // Initializes the coordinate transformations and free strains to initial values.
     void initCoordinates();

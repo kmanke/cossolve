@@ -28,10 +28,11 @@ constexpr int twistLength = 6;
 using ScalarType = double; // This defines the data type of all numerical quantities used by the solver
 using VectorType = Eigen::VectorX<ScalarType>;
 using TwistType = Eigen::Vector<ScalarType, twistLength>;
-using MatrixType = Eigen::SparseMatrix<ScalarType>;
+using SparseType = Eigen::SparseMatrix<ScalarType>;
 using SingleMatrixType = Eigen::Matrix<ScalarType, 6, 6>;
 using CoordType = Eigen::Matrix<ScalarType, 4, 4>;
 using PointType = Eigen::Vector<ScalarType, 3>;
+using DenseType = Eigen::MatrixX<ScalarType>;
 
 using TripletList = std::vector<Eigen::Triplet<ScalarType>>;
 using PairList = std::vector<std::pair<int, ScalarType>>;
