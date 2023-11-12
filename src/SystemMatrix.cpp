@@ -109,24 +109,6 @@ void SystemMatrix::updateFixedConstraints()
     return;
 }
 
-template <SystemMatrix::SubMatrix sub, bool prune>
-void SystemMatrix::clearBlock()
-{
-    cossolve::clearBlock<prune>(mat, firstRow<sub>(), firstCol<sub>(), nRows<sub>(), nCols<sub>());
-    return;
-}
-
-void SystemMatrix::initStiffnessMatrix(Eigen::Ref<const TwistType> diag)
-{
-    // For now, this just gets put in the EinvKD matrix
-    K = SparseType(nRows<strain>(), nCols<strain>());
-    for (int i = firstCol<strain>(); i <= lastCol<strain>(); i++)
-    {
-	K.coeffRef(i, i) = diag(i % twistLength);
-    }
-    return;
-}
-
 void SystemMatrix::initDerivativeMatrix(const DerivativeMatrixCoefficients& coeffs)
 {
     // We make a temporary copy before multiplying it with the stiffness matrix

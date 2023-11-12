@@ -25,36 +25,13 @@
 #include "ConstraintList.h"
 #include "SolverParameters.h"
 #include "MatrixOps.h"
+#include "Indexer.h"
 
 #include <eigen3/Eigen/Eigen>
 
+#include <iostream>
+
 namespace cossolve {
-
-struct DerivativeMatrixCoefficients
-{
-    ScalarType firstNodeCurrentCoeff;
-    ScalarType firstNodeNextCoeff;
-    ScalarType innerNodePrevCoeff;
-    ScalarType innerNodeCurrentCoeff;
-    ScalarType innerNodeNextCoeff;
-    ScalarType lastNodePrevCoeff;
-    ScalarType lastNodeCurrentCoeff;
-};
-
-struct IntegralMatrixCoefficients
-{
-    ScalarType firstNodeCurrentCoeff;
-    ScalarType firstNodeNextCoeff;
-    ScalarType innerNodeFirstCoeff;
-    ScalarType innerNodeIntermediateCoeff;
-    ScalarType innerNodePrevCoeff;
-    ScalarType innerNodeCurrentCoeff;
-    ScalarType innerNodeNextCoeff;
-    ScalarType lastNodeFirstCoeff;
-    ScalarType lastNodeIntermediateCoeff;
-    ScalarType lastNodePrevCoeff;
-    ScalarType lastNodeCurrentCoeff;
-};
 
 enum class BlockDim { row, col };
 
@@ -68,8 +45,6 @@ public:
     // Getter functions
     inline const MatrixType& getMat() const { return mat; }
     inline MatrixType& getMatRef() { return mat; }
-//    inline const MatrixType& getEinv() const { return Einv; }
-//    inline const MatrixType& getAfK() const { return AfK; }
 
     // Returns a reference to the sub matrix at `blockRow`, `blockCol`
     const auto getBlock(int blockRow, int blockCol) const
@@ -79,6 +54,10 @@ public:
     // Clears all data in the specified block. Zero entries are not automatically
     // pruned.
     void clearBlock(int blockRow, int blockCol);
+
+    // Clears all the data in the specified dimension
+    template <BlockDim dim>
+    void clearDim(int blockIndex);
 
     // Copies all data from `src` to the specified block.
     void copyToBlock(const MatrixType& src, int blockRow, int blockCol);
@@ -101,35 +80,19 @@ public:
 
     // Adds the values in `src` to the specified block.
     void addToBlock(const MatrixType& src, int blockRow, int blockCol);
+    void subtractFromBlock(const MatrixType& src, int blockRow, int blockCol);
 
     // Returns a reference to a single coefficient within the specified block
-    ScalarType& coeffRef(int blockRow, int blockCol, int rowIndex, int colIndex,
-			 int stride = 1, int offset = 0);
+    ScalarType& coeffRef(int blockRow, int blockCol, int row, int col);
 
     // Returns the specified coefficient within the specified block by value.
     ScalarType coeff(int blockRow, int blockCol, int row, int col);
 
     template <BlockDim dim>
     int getIndex(int blockIndex, int index, int stride = 1, int offset = 0);
-    
-    // Initialization functions
-    // Initializes the strain matrix.
-    void initStrainMatrix(Eigen::Ref<const TwistType> stiffnessDiag,
-			  const DerivativeMatrixCoefficients& derivCoeffs,
-			  const IntegralMatrixCoefficients& intCoeffs,
-			  SparseLUSolver<MatrixType>& solver);
 
-    // Updates the submatrix dimensions to accomodate an added constraint
-    // Note that the matrices are not automatically populated. A call to
-    // `updateFixedconstraints` is necessary to do so.
-    void addFixedConstraint(int index);
-
-    // Removes the fixed constraint corresponding to the passed
-    // constraint number.
-    void removeFixedConstraint(int index); // not implemented yet
-
-    // Updates the fixed constraint submatrix to reflect changes.
-    void updateFixedConstraints();
+    template <unsigned rowStride, unsigned colStride>
+    Indexer<rowStride, colStride> getIndexer(int blockRow, int blockCol);
     
 private:
     // This structure holds the offsets and sizes of each sub dimension
@@ -150,29 +113,30 @@ private:
     // The full system matrix
     MatrixType mat;
 
-    // We need to store copies of some matrices so we can regenerate efficiently
-/*    MatrixType K; // Stiffness
-    MatrixType D; // Derivative
-    MatrixType E; // Integral
-    MatrixType Einv; // E^-1
-    MatrixType EinvKD; // E^-1*K*D
-    MatrixType Af; // Adjoint strain
-    MatrixType AfK; // Af*K */
-  
-    /*// Helper functions for indexing the various matrix types
-    template <SubMatrix sub>
-    int firstIndex();
-    template <SubMatrix sub>
-    int lastIndex();
-    template <SubMatrix sub>
-    int nDims();
-    template <SubMatrix sub>
-    int subIndex(int index, int stride = 1); */
-    
-    // Internal functions
-    void initStiffnessMatrix(Eigen::Ref<const TwistType> diag);
-    void initDerivativeMatrix(const DerivativeMatrixCoefficients& coeffs);
-    void initIntegralMatrix(const IntegralMatrixCoefficients& coeffs);
+    // This function checks for negative indices and adjusts them
+    // to point to the correct index.
+    inline void adjustIndex(int& blockRow, int& blockCol)
+    {
+	if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
+	if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
+	return;
+    }
+    template <BlockDim dim>
+    inline void adjustIndex(int& blockIndex)
+    {
+	if (blockIndex < 0)
+	{
+	    if constexpr (dim == BlockDim::row)
+	    {
+		blockIndex = subRows.size() + blockIndex;
+	    }
+	    else
+	    {
+		blockIndex = subCols.size() + blockIndex;
+	    }
+	}
+	return;
+    }
 };
 
 // Definition of templated functions
@@ -201,10 +165,31 @@ SystemMatrix<MatrixType>::~SystemMatrix() { }
 template <typename MatrixType>
 void SystemMatrix<MatrixType>::clearBlock(int blockRow, int blockCol)
 {
-    if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
-    if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
+    adjustIndex(blockRow, blockCol);
     cossolve::clearBlock(mat, subRows[blockRow].first, subCols[blockCol].first,
 			 subRows[blockRow].count, subCols[blockCol].count);
+    return;
+}
+
+template <typename MatrixType>
+template <BlockDim dim>
+void SystemMatrix<MatrixType>::clearDim(int blockIndex)
+{
+    adjustIndex<dim>(blockIndex);
+    if constexpr(dim == BlockDim::row)
+    {
+	for (int i = 0; i < subCols.size(); i++)
+	{
+	    clearBlock(blockIndex, i);
+	}
+    }
+    else
+    {
+	for (int i = 0; i < subRows.size(); i++)
+	{
+	    clearBlock(i, blockIndex);
+	}
+    }
     return;
 }
 
@@ -229,10 +214,20 @@ void SystemMatrix<MatrixType>::addToBlock(const MatrixType& src, int blockRow, i
 }
 
 template <typename MatrixType>
-ScalarType& SystemMatrix<MatrixType>::coeffRef(int blockRow, int blockCol, int row, int col, int stride, int offset)
+void SystemMatrix<MatrixType>::subtractFromBlock(const MatrixType& src, int blockRow, int blockCol)
 {
-    return mat.coeffRef(getIndex<BlockDim::row>(blockRow, row, stride, offset),
-			getIndex<BlockDim::col>(blockCol, col, stride, offset));
+    if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
+    if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
+    cossolve::subtractBlock(src, mat, 0, 0, subRows[blockRow].first, subCols[blockCol].first,
+			    src.rows(), src.cols());
+    return;
+}
+
+template <typename MatrixType>
+ScalarType& SystemMatrix<MatrixType>::coeffRef(int blockRow, int blockCol, int row, int col)
+{
+    return mat.coeffRef(getIndex<BlockDim::row>(blockRow, row),
+			getIndex<BlockDim::col>(blockCol, col));
 }
 
 template <typename MatrixType>
@@ -249,10 +244,10 @@ void SystemMatrix<MatrixType>::addBlock(int size)
     {
 	SubDim newRow;
 	newRow.count = size;
-	newRow.first = subCols.back().last + 1;
+	newRow.first = subRows.back().last + 1;
 	newRow.last = newRow.first + newRow.count - 1;
+	addDim<AddDimType::row>(mat, newRow.first - 1, newRow.count);
 	subRows.emplace_back(std::move(newRow));
-	enlargeBlock<BlockDim::row>(subRows.size() - 1, -1, size);
     }
     else
     {
@@ -260,8 +255,8 @@ void SystemMatrix<MatrixType>::addBlock(int size)
 	newCol.count = size;
 	newCol.first = subCols.back().last + 1;
 	newCol.last = newCol.first + newCol.count - 1;
+	addDim<AddDimType::col>(mat, newCol.first - 1, newCol.count);
 	subCols.emplace_back(std::move(newCol));
-	enlargeBlock<BlockDim::col>(subCols.size() - 1, -1, size);
     }
     return;
 }
@@ -331,61 +326,13 @@ int SystemMatrix<MatrixType>::getIndex(int blockIndex, int index, int stride, in
     }
 }
 
-
-/*template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::firstIndex()
+template <typename MatrixType>
+template <unsigned rowStride, unsigned colStride>
+Indexer<rowStride, colStride> SystemMatrix<MatrixType>::getIndexer(int blockRow, int blockCol)
 {
-    if constexpr (sub == SubMatrix::system ||
-		  sub == SubMatrix::twist)
-    {
-	return 0;
-    }
-    else if constexpr (sub == SubMatrix::strain)
-    {
-	return lastIndex<SubMatrix::twist>() + 1;
-    }
-    else if constexpr (sub == SubMatrix::fixed)
-    {
-	return lastIndex<SubMatrix::strain>() + 1;
-    }
-    else
-    {
-	return 0;
-    }
+    return Indexer<rowStride, colStride>(subRows[blockRow].count, subCols[blockCol].count,
+					 subRows[blockRow].first, subCols[blockCol].count);
 }
-    
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::lastIndex()
-{
-    return firstIndex<sub>() + nDims<sub>() - 1;
-}
-    
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::nDims()
-{
-    if constexpr (sub == SubMatrix::system)
-    {
-	return nDims<SubMatrix::twist>() + nDims<SubMatrix::strain>() + nDims<SubMatrix::fixed>();
-    }
-    else if constexpr (sub == SubMatrix::twist || sub == SubMatrix::strain)
-    {
-	return params.nNodes() * twistLength;
-    }
-    else if constexpr (sub == SubMatrix::twist)
-    {
-	return fixedConstraints.size() * twistLength;
-    }
-    else
-    {
-	return 0;
-    }
-}
-    
-template <SystemMatrix::SubMatrix sub>
-int SystemMatrix::subIndex(int index, int stride)
-{
-    return (index >= 0) ? (firstIndex<sub>() + index*stride) : (lastIndex<sub>() + 1 + index*stride);
-    }*/
 
 } // namespace cossolve
 

@@ -23,7 +23,6 @@
 #include "CossolveTypes.h"
 #include "Logger.h"
 #include "SystemMatrix.h"
-//#include "SystemVector.h"
 #include "SolverParameters.h"
 #include "ForceList.h"
 
@@ -51,7 +50,7 @@ public:
 //    inline Eigen::Ref<const VectorType> getStrains() const { return strains.block(0, 0, nodeIndex(-1), 1); }
     inline const std::vector<CoordType>& getCoords() const { return gBody; }
     inline Eigen::Ref<const VectorType> getStrains() const { return VectorType(); }
-    inline int getNodeCount() const { return params.nNodes(); }
+    inline int getNodeCount() const { return params.nNodes; }
 
     // Adds a force to the rod.
     // The force is transformed from its actual position to act
@@ -80,6 +79,12 @@ public:
     void computeStrains();
     
 private:
+    struct BlockIndex
+    {
+	static constexpr int twist = 0;
+	static constexpr int strain = 1;
+	static constexpr int fixedConstraint = 2;
+    };
     // Useful utilities
     Logger<LogLevel::debug> logger;
 
@@ -95,19 +100,17 @@ private:
     // System state
     SystemMatrix<DenseType> lhs;
     SystemMatrix<DenseType> rhs;
-    VectorType fStar;
+    DenseType fStar;
     std::vector<CoordType> gBody; // From body to spatial
     
     // System parameter matrices
     SystemMatrix<SparseType> mat; // Full system matrix
+
+    // These submatrices need to be held onto to update the system matrix
     SparseType K; // Stiffness matrix
-    SparseType Kinv; // K^-1
-    SparseType E; // Twist integral
-    SparseType D; // Twist derivative
-    SparseType Eprime; // Strain integral
-    SparseType Dprime; // Derivative
-    SparseType Af; // Adjoint matrix
-    SparseType AfK; // Af * K
+    SparseType AK; // A*K
+    SparseType strainEqnForcePreMultiplier;
+    SparseType strainEqnFreeStrainPreMultiplier;
 
     // Solvers
     SparseLUSolver<SparseType> sparseLuSolver;
@@ -115,9 +118,21 @@ private:
     // Initializes the coordinate transformations and free strains to initial values.
     void initCoordinates();
 
-    // Regenerates the strain adjoint matrix.
-    void generateAdjointMatrix();
-        
+    // Initializatin subfunctions
+    void initSystemMatrix();
+    
+    // Regenerates the strain adjoint matrix, then updates all `mat` and `rhs` blocks
+    // which depend on it.
+    void updateAdjoint();
+
+    // Updates the RHS with the current applied forces
+    void updateAppliedForces();
+
+    // Updates the system matrix to reflect changed fixed constraints.
+    // This only needs to be called when fixed constraints change. There is no need
+    // to call it every iteration.
+    void updateFixedConstraints();
+    
     // This function generates a coordinate transformation matrix which transforms
     // from the nearest node to s to s.
     // Input:

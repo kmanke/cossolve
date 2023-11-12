@@ -31,6 +31,7 @@ using TwistType = Eigen::Vector<ScalarType, twistLength>;
 using SparseType = Eigen::SparseMatrix<ScalarType>;
 using SingleMatrixType = Eigen::Matrix<ScalarType, 6, 6>;
 using CoordType = Eigen::Matrix<ScalarType, 4, 4>;
+using RotationType = Eigen::Matrix<ScalarType, 4, 4>;
 using PointType = Eigen::Vector<ScalarType, 3>;
 using DenseType = Eigen::MatrixX<ScalarType>;
 

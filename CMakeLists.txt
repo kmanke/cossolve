@@ -77,5 +77,5 @@ target_sources(cossolve PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/capi.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/StaticSolver.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/SystemMatrix.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/SystemVector.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/MatrixConstructor.cpp"
 )

@@ -22,10 +22,15 @@
 
 #include "CossolveTypes.h"
 #include "config.h"
+#include "MatrixConstructor.h"
 
 #include <vector>
+#include <iostream>
 
 namespace cossolve {
+
+// Applies the passed list of MatrixConstructors to the specified matrix.
+void constructMatrix(const MatrixConstructorList& constructors, SparseType& mat);
 
 // Convenience function to calculate indices within matrices or vectors.
 // The returned value is `index` * `stride` + `offset`.
@@ -64,6 +69,11 @@ template <typename Matrix>
 void addBlock(const Matrix& src, Matrix& dst,
 	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
 	      int nRows, int nCols);
+
+template <typename Matrix>
+void subtractBlock(const Matrix& src, Matrix& dst,
+		   int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+		   int nRows, int nCols);
 
 // Implementation of templated functions follows.
 
@@ -145,6 +155,66 @@ void addDimDense(DenseType& dst, int afterDim, int nDims)
     return;
 }
 
+// Specialization of `addBlock` for sparse matrices.
+template<bool subtract>
+void addBlockSparse(const SparseType& src, SparseType& dst,
+				int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+				int nRows, int nCols)
+{
+    // Iterate through and add all values from src
+    int startOuter = (SparseType::IsRowMajor) ? srcStartRow : srcStartCol;
+    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
+    int startInner = (SparseType::IsRowMajor) ? srcStartCol : srcStartRow;
+    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+    int deltaRow = dstStartRow - srcStartRow;
+    int deltaCol = dstStartCol - srcStartCol;
+    for (int outer = startOuter; outer < endOuter; outer++)
+    {
+	for (auto innerIt = SparseType::InnerIterator(src, outer); innerIt; ++innerIt)
+	{
+	    // Check if we're past the first row / col
+	    if (innerIt.index() >= startInner)
+	    {	
+		// Check if we're past the last row / col
+		// Since inners are guaranteed to be ascending, we can break here
+		if (innerIt.index() >= endInner)
+		{
+		    break;
+		}
+		// Found a value in the src block. Add it to dst.
+		if constexpr (!subtract)
+		{
+		    dst.coeffRef(innerIt.row() + deltaRow, innerIt.col() + deltaCol) += innerIt.value();
+		}
+		else
+		{
+		    dst.coeffRef(innerIt.row() + deltaRow, innerIt.col() + deltaCol) -= innerIt.value();
+		}
+	    }
+	}
+    }
+    return;
+}
+
+// Specialization of `addBlock` for dense matrices.
+template<bool subtract>
+void addBlockDense(const DenseType& src, DenseType& dst,
+			  int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+			  int nRows, int nCols)
+{
+    if constexpr (!subtract)
+    {
+	dst.block(dstStartRow, dstStartCol, nRows, nCols) +=
+	    src.block(srcStartRow, srcStartCol, nRows, nCols);
+    }
+    else
+    {
+	dst.block(dstStartRow, dstStartCol, nRows, nCols) -=
+	    src.block(srcStartRow, srcStartCol, nRows, nCols);
+    }
+    return;
+}
+
 } // End anonymous namespace
 
 template <AddDimType dim, typename Matrix>
@@ -161,6 +231,41 @@ void addDim(Matrix& dst, int afterDim, int nDims)
     return;
 }
 
+template <typename Matrix>
+void addBlock(const Matrix& src, Matrix& dst,
+	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+	      int nRows, int nCols)
+{
+    if constexpr (std::is_same_v<Matrix, SparseType>)
+    {
+	addBlockSparse<false>(src, dst, srcStartRow, srcStartCol,
+			      dstStartRow, dstStartCol, nRows, nCols);
+    }
+    else if constexpr (std::is_same_v<Matrix, DenseType>)
+    {
+	addBlockDense<false>(src, dst, srcStartRow, srcStartCol,
+			     dstStartRow, dstStartCol, nRows, nCols);
+    }
+    return;
+}
+
+template <typename Matrix>
+void subtractBlock(const Matrix& src, Matrix& dst,
+	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
+	      int nRows, int nCols)
+{
+    if constexpr (std::is_same_v<Matrix, SparseType>)
+    {
+	addBlockSparse<true>(src, dst, srcStartRow, srcStartCol,
+			      dstStartRow, dstStartCol, nRows, nCols);
+    }
+    else if constexpr (std::is_same_v<Matrix, DenseType>)
+    {
+	addBlockDense<true>(src, dst, srcStartRow, srcStartCol,
+			     dstStartRow, dstStartCol, nRows, nCols);
+    }
+    return;
+}
 
 } // namespace cossolve
     

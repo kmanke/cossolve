@@ -24,52 +24,35 @@
 
 namespace cossolve {
 
-class SolverParameters
+struct SolverParameters
 {
 public:
     SolverParameters(ScalarType tensileModulus, ScalarType poissonRatio, ScalarType shearModulus,
 		     ScalarType momentX, ScalarType momentY, ScalarType momentZ, ScalarType area,
 		     ScalarType length, ScalarType linearDensity, int nNodes)
-	: tensileModulusVal(tensileModulus), poissonRatioVal(poissonRatio),
-	  shearModulusVal(shearModulus == 0 ? tensileModulus / (2*(1 + poissonRatio)) : shearModulus),
-	  momentXVal(momentX), momentYVal(momentY), momentZVal(momentZ), areaVal(area), lengthVal(length),
-	linearDensityVal(linearDensity), nNodesVal(nNodes), nSegmentsVal(nNodesVal - 1),
-	dsVal(lengthVal / nSegmentsVal)
+	: tensileModulus(tensileModulus), poissonRatio(poissonRatio),
+	  shearModulus(shearModulus == 0 ? tensileModulus / (2*(1 + poissonRatio)) : shearModulus),
+	  momentX(momentX), momentY(momentY), momentZ(momentZ), area(area), length(length),
+	linearDensity(linearDensity), nNodes(nNodes), nSegments(nNodes - 1),
+	ds(length / nSegments)
     {
     }
-    
-    // Public const references to values
-    ScalarType tensileModulus() const { return tensileModulusVal; }
-    ScalarType poissonRatio() const { return poissonRatioVal; }
-    ScalarType shearModulus() const { return shearModulusVal; }
-    ScalarType momentX() const { return momentXVal; }
-    ScalarType momentY() const { return momentYVal; }
-    ScalarType momentZ() const { return momentZVal; }
-    ScalarType area() const { return areaVal; }
-    ScalarType length() const { return lengthVal; }
-    ScalarType linearDensity() const { return linearDensityVal; }
-
-    int nNodes() const { return nNodesVal; }
-    int nSegments() const { return nSegmentsVal; }
-    ScalarType ds() const { return dsVal; }
-    
-private:
     // Physical values
-    ScalarType tensileModulusVal;
-    ScalarType poissonRatioVal;
-    ScalarType shearModulusVal;
-    ScalarType momentXVal;
-    ScalarType momentYVal;
-    ScalarType momentZVal;
-    ScalarType areaVal;
-    ScalarType lengthVal;
-    ScalarType linearDensityVal;
+    ScalarType tensileModulus;
+    ScalarType poissonRatio;
+    ScalarType shearModulus;
+    ScalarType momentX;
+    ScalarType momentY;
+    ScalarType momentZ;
+    ScalarType area;
+    ScalarType length;
+    ScalarType linearDensity;
 
     // Discretization parameters
-    int nNodesVal; // The number of nodes to place on the rod
-    int nSegmentsVal; // The number of segments along the rod
-    int nFixedConstraintsVal; // The number of fixed constraints
-    ScalarType dsVal; // The change in arclength parameter per segment
+    int nNodes; // The number of nodes to place on the rod
+    int nSegments; // The number of segments along the rod
+    int nFixedConstraints; // The number of fixed constraints
+    ScalarType ds; // The change in arclength parameter per segment
 };
     
 } // namespace cossolve
