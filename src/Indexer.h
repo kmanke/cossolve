@@ -20,6 +20,8 @@
 #ifndef COSSOLVE_INDEXER_H
 #define COSSOLVE_INDEXER_H
 
+#include <eigen3/Eigen/Eigen>
+
 namespace cossolve {
 
 template <unsigned rowStride, unsigned colStride>
@@ -73,16 +75,33 @@ public:
 
     // Returns a block from the specified matrix
     // The block size is equal to the stride sizes
-    template <typename MatrixType>
-    inline auto block(MatrixType mat, int rowIndex, int colIndex)
+    template <typename Derived>
+    inline Eigen::Block<Derived, rowStride, colStride> block(Eigen::EigenBase<Derived>& mat,
+							     int rowIndex, int colIndex)
     {
-	return mat.template block<rowStride, colStride>(row(rowIndex), col(colIndex));
+	return Eigen::Block<Derived, rowStride, colStride>(mat.derived(), row(rowIndex), col(colIndex));
     }
-    // In this overload, the block size is specified
-    template <typename MatrixType>
-    inline auto block(MatrixType mat, int rowIndex, int colIndex, int nRows, int nCols)
+    
+    template <typename Derived>
+    inline const Eigen::Block<const Derived, rowStride, colStride> block(const Eigen::EigenBase<Derived>& mat,
+									 int rowIndex, int colIndex)
     {
-	return mat.block(row(rowIndex), col(colIndex), nRows, nCols);
+	return Eigen::Block<const Derived, rowStride, colStride>(mat.derived(), row(rowIndex), col(colIndex));
+    }
+    
+    // In this overload, the block size is specified
+    template <typename Derived>
+    inline Eigen::Block<Derived> block(Eigen::EigenBase<Derived>& mat,
+				       int rowIndex, int colIndex, int nRows, int nCols)
+    {
+	return Eigen::Block<Derived>(mat.derived(), row(rowIndex), col(colIndex), nRows, nCols);
+    }
+    
+    template <typename Derived>
+    inline const Eigen::Block<const Derived> block(const Eigen::EigenBase<Derived>& mat,
+						   int rowIndex, int colIndex, int nRows, int nCols)
+    {
+	return Eigen::Block<const Derived>(mat.derived(), row(rowIndex), col(colIndex), nRows, nCols);
     }
 
 private:

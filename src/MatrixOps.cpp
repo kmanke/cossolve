@@ -40,10 +40,10 @@ template <>
 void clearBlock<SparseType>(SparseType& dst, int startRow, int startCol, int nRows, int nCols)
 {
     // Iterate through and zero all values
-    int startOuter = (SparseType::IsRowMajor) ? startRow : startCol;
-    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
-    int startInner = (SparseType::IsRowMajor) ? startCol : startRow;
-    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+    int startOuter = (dst.IsRowMajor) ? startRow : startCol;
+    int endOuter = startOuter + ((dst.IsRowMajor) ? nRows : nCols);
+    int startInner = (dst.IsRowMajor) ? startCol : startRow;
+    int endInner = startInner + ((dst.IsRowMajor) ? nCols : nRows);
 
     for (int outer = startOuter; outer < endOuter; outer++)
     {
@@ -80,14 +80,10 @@ void copyBlock<SparseType>(const SparseType& src, SparseType& dst,
 	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
 	      int nRows, int nCols)
 {
-    if (srcStartRow < 0) { srcStartRow = src.rows() + srcStartRow; }
-    if (srcStartCol < 0) { srcStartCol = src.cols() + srcStartCol; }
-    if (dstStartRow < 0) { dstStartRow = dst.rows() + dstStartRow; }
-    if (dstStartCol < 0) { dstStartCol = dst.cols() + dstStartCol; }
-    int startOuter = (SparseType::IsRowMajor) ? srcStartRow : srcStartCol;
-    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
-    int startInner = (SparseType::IsRowMajor) ? srcStartCol : srcStartRow;
-    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+    int startOuter = (src.IsRowMajor) ? srcStartRow : srcStartCol;
+    int endOuter = startOuter + ((src.IsRowMajor) ? nRows : nCols);
+    int startInner = (src.IsRowMajor) ? srcStartCol : srcStartRow;
+    int endInner = startInner + ((src.IsRowMajor) ? nCols : nRows);
     int deltaRow = dstStartRow - srcStartRow;
     int deltaCol = dstStartCol - srcStartCol;
     clearBlock(dst, dstStartRow, dstStartCol, nRows, nCols);
@@ -118,10 +114,6 @@ void copyBlock<DenseType>(const DenseType& src, DenseType& dst,
 	      int srcStartRow, int srcStartCol, int dstStartRow, int dstStartCol,
 	      int nRows, int nCols)
 {
-    if (srcStartRow < 0) { srcStartRow = src.rows() + srcStartRow; }
-    if (srcStartCol < 0) { srcStartCol = src.cols() + srcStartCol; }
-    if (dstStartRow < 0) { dstStartRow = dst.rows() + dstStartRow; }
-    if (dstStartCol < 0) { dstStartCol = dst.cols() + dstStartCol; }
     dst.block(dstStartRow, dstStartCol, nRows, nCols) =
 	src.block(srcStartRow, srcStartCol, nRows, nCols);
     return;

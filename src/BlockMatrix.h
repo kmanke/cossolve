@@ -17,8 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef COSSOLVE_SYSTEM_MATRIX_H
-#define COSSOLVE_SYSTEM_MATRIX_H
+#ifndef COSSOLVE_BLOCK_MATRIX_H
+#define COSSOLVE_BLOCK_MATRIX_H
 
 #include "config.h"
 #include "CossolveTypes.h"
@@ -36,11 +36,11 @@ namespace cossolve {
 enum class BlockDim { row, col };
 
 template <typename MatrixType>
-class SystemMatrix
+class BlockMatrix
 {    
 public:
-    SystemMatrix(int firstBlockRows, int firstBlockCols);
-    ~SystemMatrix();
+    BlockMatrix(int firstBlockRows, int firstBlockCols);
+    ~BlockMatrix();
 
     // Getter functions
     inline const MatrixType& getMat() const { return mat; }
@@ -141,7 +141,7 @@ private:
 
 // Definition of templated functions
 template <typename MatrixType>
-SystemMatrix<MatrixType>::SystemMatrix(int firstBlockRows, int firstBlockCols)
+BlockMatrix<MatrixType>::BlockMatrix(int firstBlockRows, int firstBlockCols)
 {
     // Allocate the rows and add the first block to the lists
     mat = MatrixType(firstBlockRows, firstBlockCols);
@@ -160,10 +160,10 @@ SystemMatrix<MatrixType>::SystemMatrix(int firstBlockRows, int firstBlockCols)
 }
 
 template <typename MatrixType>
-SystemMatrix<MatrixType>::~SystemMatrix() { }
+BlockMatrix<MatrixType>::~BlockMatrix() { }
 
 template <typename MatrixType>
-void SystemMatrix<MatrixType>::clearBlock(int blockRow, int blockCol)
+void BlockMatrix<MatrixType>::clearBlock(int blockRow, int blockCol)
 {
     adjustIndex(blockRow, blockCol);
     cossolve::clearBlock(mat, subRows[blockRow].first, subCols[blockCol].first,
@@ -173,7 +173,7 @@ void SystemMatrix<MatrixType>::clearBlock(int blockRow, int blockCol)
 
 template <typename MatrixType>
 template <BlockDim dim>
-void SystemMatrix<MatrixType>::clearDim(int blockIndex)
+void BlockMatrix<MatrixType>::clearDim(int blockIndex)
 {
     adjustIndex<dim>(blockIndex);
     if constexpr(dim == BlockDim::row)
@@ -194,7 +194,7 @@ void SystemMatrix<MatrixType>::clearDim(int blockIndex)
 }
 
 template <typename MatrixType>
-void SystemMatrix<MatrixType>::copyToBlock(const MatrixType& src, int blockRow, int blockCol)
+void BlockMatrix<MatrixType>::copyToBlock(const MatrixType& src, int blockRow, int blockCol)
 {
     if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
     if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
@@ -204,7 +204,7 @@ void SystemMatrix<MatrixType>::copyToBlock(const MatrixType& src, int blockRow, 
 }
 
 template <typename MatrixType>
-void SystemMatrix<MatrixType>::addToBlock(const MatrixType& src, int blockRow, int blockCol)
+void BlockMatrix<MatrixType>::addToBlock(const MatrixType& src, int blockRow, int blockCol)
 {
     if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
     if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
@@ -214,7 +214,7 @@ void SystemMatrix<MatrixType>::addToBlock(const MatrixType& src, int blockRow, i
 }
 
 template <typename MatrixType>
-void SystemMatrix<MatrixType>::subtractFromBlock(const MatrixType& src, int blockRow, int blockCol)
+void BlockMatrix<MatrixType>::subtractFromBlock(const MatrixType& src, int blockRow, int blockCol)
 {
     if (blockRow < 0) { blockRow = subRows.size() + blockRow; }
     if (blockCol < 0) { blockCol = subCols.size() + blockCol; }
@@ -224,50 +224,42 @@ void SystemMatrix<MatrixType>::subtractFromBlock(const MatrixType& src, int bloc
 }
 
 template <typename MatrixType>
-ScalarType& SystemMatrix<MatrixType>::coeffRef(int blockRow, int blockCol, int row, int col)
+ScalarType& BlockMatrix<MatrixType>::coeffRef(int blockRow, int blockCol, int row, int col)
 {
     return mat.coeffRef(getIndex<BlockDim::row>(blockRow, row),
 			getIndex<BlockDim::col>(blockCol, col));
 }
 
 template <typename MatrixType>
-ScalarType SystemMatrix<MatrixType>::coeff(int blockRow, int blockCol, int row, int col)
+ScalarType BlockMatrix<MatrixType>::coeff(int blockRow, int blockCol, int row, int col)
 {
     return mat.coeff(subRows[blockRow].first + row, subCols[blockCol].first + col);
 }
 
 template <typename MatrixType>
 template <BlockDim dim>
-void SystemMatrix<MatrixType>::addBlock(int size)
+void BlockMatrix<MatrixType>::addBlock(int size)
 {
-    if constexpr (dim == BlockDim::row)
-    {
-	SubDim newRow;
-	newRow.count = size;
-	newRow.first = subRows.back().last + 1;
-	newRow.last = newRow.first + newRow.count - 1;
-	addDim<AddDimType::row>(mat, newRow.first - 1, newRow.count);
-	subRows.emplace_back(std::move(newRow));
-    }
-    else
-    {
-	SubDim newCol;
-	newCol.count = size;
-	newCol.first = subCols.back().last + 1;
-	newCol.last = newCol.first + newCol.count - 1;
-	addDim<AddDimType::col>(mat, newCol.first - 1, newCol.count);
-	subCols.emplace_back(std::move(newCol));
-    }
+    SubDim newDim;
+    SubDimList& list = (dim == BlockDim::row) ? subRows : subCols;
+    constexpr AddDimType adt = (dim == BlockDim::row) ? AddDimType::row : AddDimType::col;
+
+    newDim.count = size;
+    newDim.first = list.back().last + 1;
+    newDim.last = newDim.first + newDim.count - 1;
+    list.emplace_back(std::move(newDim));
+    addDim<adt>(mat, newDim.first - 1, newDim.count);
+    
     return;
 }
 
 template <typename MatrixType>
 template <BlockDim dim>
-void SystemMatrix<MatrixType>::enlargeBlock(int blockIndex, int afterIndex, int count)
+void BlockMatrix<MatrixType>::enlargeBlock(int blockIndex, int afterIndex, int count)
 {
     if constexpr (dim == BlockDim::row)
     {
-	if (blockIndex < 0) { blockIndex = subRows.size() + blockIndex; }
+	adjustIndex<dim>(blockIndex);
 	addDim<AddDimType::row>(mat, subRows[blockIndex].first + afterIndex, count);
 	subRows[blockIndex].count += count;
 	subRows[blockIndex].last += count;
@@ -279,7 +271,7 @@ void SystemMatrix<MatrixType>::enlargeBlock(int blockIndex, int afterIndex, int 
     }
     else
     {
-	if (blockIndex < 0) { blockIndex = subCols.size() + blockIndex; }
+	adjustIndex<dim>(blockIndex);
 	addDim<AddDimType::col>(mat, subCols[blockIndex].first + afterIndex, count);
 	subCols[blockIndex].count += count;
 	subCols[blockIndex].last += count;
@@ -294,7 +286,7 @@ void SystemMatrix<MatrixType>::enlargeBlock(int blockIndex, int afterIndex, int 
 
 template <typename MatrixType>
 template <BlockDim dim>
-int SystemMatrix<MatrixType>::blockSize(int blockIndex) const
+int BlockMatrix<MatrixType>::blockSize(int blockIndex) const
 {
     if constexpr(dim == BlockDim::row)
     {
@@ -310,7 +302,7 @@ int SystemMatrix<MatrixType>::blockSize(int blockIndex) const
 
 template <typename MatrixType>
 template <BlockDim dim>
-int SystemMatrix<MatrixType>::getIndex(int blockIndex, int index, int stride, int offset)
+int BlockMatrix<MatrixType>::getIndex(int blockIndex, int index, int stride, int offset)
 {
     if constexpr(dim == BlockDim::row)
     {
@@ -328,12 +320,12 @@ int SystemMatrix<MatrixType>::getIndex(int blockIndex, int index, int stride, in
 
 template <typename MatrixType>
 template <unsigned rowStride, unsigned colStride>
-Indexer<rowStride, colStride> SystemMatrix<MatrixType>::getIndexer(int blockRow, int blockCol)
+Indexer<rowStride, colStride> BlockMatrix<MatrixType>::getIndexer(int blockRow, int blockCol)
 {
     return Indexer<rowStride, colStride>(subRows[blockRow].count, subCols[blockCol].count,
-					 subRows[blockRow].first, subCols[blockCol].count);
+					 subRows[blockRow].first, subCols[blockCol].first);
 }
 
 } // namespace cossolve
 
-#endif // COSSOLV_SYSTEM_MATRIX_H
+#endif // COSSOLVE_BLOCK_MATRIX_H

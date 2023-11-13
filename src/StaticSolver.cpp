@@ -53,9 +53,12 @@ void StaticSolver::addForce(ScalarType s, Eigen::Ref<const TwistType> force, boo
 {
     // First, transform the force to its nearest node
     CoordType g;
+    CoordType fHat = CoordType::Zero();
     ForceListEntry newForce;
-    g.setZero();
-    int node = intermediateTransform(s, g);
+    int node = std::round(s / params.ds);
+    ScalarType deltaS = s - (node * params.ds);
+    se3hat(lhs.getIndexer<twistLength, 1>(BlockIndex::strain, 0).block(lhs.getMat(), node, 0), fHat);
+    g = (fHat * deltaS).exp();
 
     // Calculate the adjoint of the transformation
     SingleMatrixType Adg;
@@ -67,7 +70,7 @@ void StaticSolver::addForce(ScalarType s, Eigen::Ref<const TwistType> force, boo
     newForce.node = node;
     newForce.bodyFrame = bodyFrame;
     appliedForces.emplace_back(std::move(newForce));
-    
+
     return;
 }
 
@@ -111,12 +114,13 @@ void StaticSolver::addDistributedForce(ScalarType s1, ScalarType s2,
     {
 	addForce(params.ds * node, force, bodyFrame);
     }
-
     return;
 }
 
 void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
 {
+    // Add the new constraint to the list
+    logger.startTimer("addFixedConstraint");
     ConstraintListEntry constraint;
     constraint.active = true;
     constraint.node = node;
@@ -124,32 +128,67 @@ void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
 
     fixedConstraints.emplace_back(std::move(constraint));
 
-    // System needs to be updated with the new constraints
-    /*sysVec.addFixedConstraint(fixedConstraints.size() - 1);
-    sysMat.addFixedConstraint(fixedConstraints.size() - 1);
-    sysVec.updateFixedConstraints();
-    sysMat.updateFixedConstraints();*/
-    
+    // The system matrix / vectors need to be updated to reflect the added constraint
+    mat.enlargeBlock<BlockDim::row>(BlockIndex::fixedConstraint,
+				    mat.blockSize<BlockDim::row>(BlockIndex::fixedConstraint) - 1,
+				    twistLength);
+    mat.enlargeBlock<BlockDim::col>(BlockIndex::fixedConstraint,
+				    mat.blockSize<BlockDim::col>(BlockIndex::fixedConstraint) - 1,
+				    twistLength);
+    lhs.enlargeBlock<BlockDim::row>(BlockIndex::fixedConstraint,
+				    lhs.blockSize<BlockDim::row>(BlockIndex::fixedConstraint) - 1,
+				    twistLength);
+    rhs.enlargeBlock<BlockDim::row>(BlockIndex::fixedConstraint,
+				    rhs.blockSize<BlockDim::row>(BlockIndex::fixedConstraint) - 1,
+				    twistLength);
+    updateFixedConstraints();
+    logger.endTimer();
     return;
 }
 
-void StaticSolver::timeStep()
+void StaticSolver::solve()
 {
-//    applyForces(1);
-//    applyContactForces();
-//    computeStrains();
-    //   computeDeformation();
+    logger.startTimer("solve");
+    rhs.clearBlock(BlockIndex::twist, 0);
+    rhs.clearBlock(BlockIndex::strain, 0);
+    updateAdjoint();
+    updateAppliedForces();
+    
+    sparseLuSolver.compute(mat.getMat());
+    lhs.getMatRef() = sparseLuSolver.solve(rhs.getMat());
 
+    // Update the coordinates
+/*    Indexer ind = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
+    for (int i = 0; i < params.nNodes; i++)
+    {
+	gBody[i].setZero();
+	se3hat(ind.block(lhs.getMat(), i, 0), gBody[i]);
+	gBody[i] = gBody[i].exp();
+	}*/
+    Indexer ind = lhs.getIndexer<twistLength, 1>(BlockIndex::strain, 0);
+    for (int i = 1; i < params.nNodes; i++)
+    {
+	CoordType fHat = CoordType::Zero();
+	se3hat(ind.block(lhs.getMat(), i-1, 0), fHat);
+	gBody[i] = gBody[i-1]*(fHat * params.ds).exp();
+    }
+    logger.endTimer();
     return;
 }
 
 void StaticSolver::initCoordinates()
 {
+    logger.startTimer("Coordinate initialization");
+    // First, add the necessary blocks to the LHS and RHS vectors
+    lhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist));
+    lhs.addBlock<BlockDim::row>(fixedConstraints.size() * twistLength);
+    rhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist));
+    rhs.addBlock<BlockDim::row>(fixedConstraints.size() * twistLength);
+
+    // Now we initialize free strain and coordinate transformations
     fStar = DenseType::Zero(twistLength * params.nNodes, 1);
     Indexer indexer = Indexer<twistLength, 1>(fStar.rows(), fStar.cols());
     gBody = std::vector<CoordType>(params.nNodes);
-
-    // Initialize coordinate transformations
     Eigen::Vector<ScalarType, 3> p {0, 0, 0};
     for (auto gBodyIt = gBody.begin(); gBodyIt != gBody.end(); ++gBodyIt)
     {
@@ -158,7 +197,6 @@ void StaticSolver::initCoordinates()
 
 	p(0) += params.length / params.nSegments;
     }
-
     // Compute free strains based on initial geometry
     CoordType fHat;
     for (int i = 0; i < (params.nNodes - 1); i++)
@@ -168,13 +206,17 @@ void StaticSolver::initCoordinates()
     }
     // Set the free strain of the end to be the same as the previous node
     indexer.block(fStar, -1, 0) = indexer.block(fStar, -2, 0);
+    // Set initial strains to be equal to the initial free strains
+    lhs.copyToBlock(fStar, BlockIndex::strain, 0);
+    logger.endTimer();
     return;
 }
 
 void StaticSolver::initSystemMatrix()
 {
+    logger.startTimer("System matrix initialization");
     // Initialize the matrix and add blocks
-    mat = SystemMatrix<SparseType>(params.nNodes * twistLength, params.nNodes * twistLength);
+    mat = BlockMatrix<SparseType>(params.nNodes * twistLength, params.nNodes * twistLength);
     // Add the strain dimension
     mat.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(0));
     mat.addBlock<BlockDim::col>(mat.blockSize<BlockDim::col>(0));
@@ -253,19 +295,24 @@ void StaticSolver::initSystemMatrix()
     Einv = sparseLuSolver.solve(I);
 
     // Theses blocks need to be held onto for future calculations
-    strainEqnForcePreMultiplier = (K*EprimeInv*T*Kinv + I).pruned();
+    strainEqnForcePreMultiplier = (-K*EprimeInv*T*Kinv + I).pruned();
     strainEqnFreeStrainPreMultiplier = (K*EprimeInv*T).pruned();
 
     // These blocks are constant or just have AK added to them, so we
     // can update them in place without needing to save
     SparseType twistTwist = (K*Einv*D).pruned();
-    SparseType twistStrain = (K*Einv*R).pruned();
+    SparseType twistStrain = (-K*Einv*R).pruned();
     SparseType strainStrain = (K*EprimeInv*Dprime);
     
     mat.copyToBlock(twistTwist, BlockIndex::twist, BlockIndex::twist);
     mat.copyToBlock(twistStrain, BlockIndex::twist, BlockIndex::strain);
     mat.copyToBlock(strainStrain, BlockIndex::strain, BlockIndex::strain);
 
+//    logger.log() << '\n' << DenseType(D);
+    //  logger.log() << '\n' << DenseType(E);
+    //logger.log() << '\n' << DenseType(R);
+    
+    logger.endTimer();
     return;
 }
 
@@ -280,7 +327,8 @@ void StaticSolver::updateAdjoint()
     SingleMatrixType adf;
     Indexer strainIndexer = lhs.getIndexer<twistLength, 1>(BlockIndex::strain, 0);
     Eigen::Ref<DenseType> lhsRef = lhs.getMatRef();
-    SparseType A;
+    SparseType A = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::strain),
+			      mat.blockSize<BlockDim::col>(BlockIndex::strain));
     Indexer Aindexer = Indexer<twistLength, twistLength>(A.rows(), A.cols());
     TripletList triplets;
     for (int i = 0; i < params.nNodes; i++)
@@ -288,9 +336,9 @@ void StaticSolver::updateAdjoint()
 	adf.setZero();
 	adjoint(strainIndexer.block(lhsRef, i, 0), adf);
 	adf.transposeInPlace();
-	for (int j = 0; j < Sizes::entriesPerVector; j++)
+	for (int j = 0; j < twistLength; j++)
 	{
-	    for (int k = 0; k < Sizes::entriesPerVector; k++)
+	    for (int k = 0; k < twistLength; k++)
 	    {
 		if (adf(j, k) != 0)
 		{
@@ -356,148 +404,41 @@ void StaticSolver::updateFixedConstraints()
     mat.clearDim<BlockDim::row>(BlockIndex::fixedConstraint);
     mat.clearDim<BlockDim::col>(BlockIndex::fixedConstraint);
 
-    // Generate the fixed constraint location matrix
-    SparseType Lf = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::fixedConstraint),
+    // Generate the fixed constraint location matrix and deactivation matrix
+    SparseType Lf = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::twist),
 			       mat.blockSize<BlockDim::col>(BlockIndex::fixedConstraint));
-    
-}
-
-int StaticSolver::intermediateTransform(ScalarType s, Eigen::Ref<CoordType> g) const
-{
-    // First, find the nearest node to s
-    int nearestNode = std::round(s / params.ds);
-    ScalarType sk = nearestNode * params.ds;
-    
-    // Compute the strain integral
-    TwistType integratedStrain = TwistType::Zero();
-    if (s > sk)
+    SparseType sigmaF = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::fixedConstraint),
+				   mat.blockSize<BlockDim::col>(BlockIndex::fixedConstraint));
+    Indexer ind = Indexer<twistLength, twistLength>(Lf.rows(), Lf.cols());
+    Indexer rhsInd = rhs.getIndexer<twistLength, 1>(BlockIndex::fixedConstraint, 0);
+    for (int i = 0; i < fixedConstraints.size(); i++)
     {
-	intermediateStrainIntegral(sk, s, integratedStrain);
-    }
-    else
-    {
-	intermediateStrainIntegral(s, sk, integratedStrain);
-	integratedStrain = -integratedStrain;
-    }
-    CoordType integratedStrainHat;
-    integratedStrainHat.setZero();
-    se3hat(integratedStrain, integratedStrainHat);
-
-    // Compute the result
-    g = integratedStrainHat.exp();
-    return nearestNode;
-}
-
-void StaticSolver::intermediateStrainIntegral(ScalarType s1, ScalarType s2, Eigen::Ref<TwistType> result) const
-{
-    // Calculate the first node before s1 and the first node before s2
-    int node1 = std::floor(s1 / params.ds);
-    int node2 = std::floor(s2 / params.ds);
-
-    // First, integrate from node1 to node2
-    nodalStrainIntegral(node1, node2, result);
-
-    // Now we need to fix up the start and the end
-    relativeStrainIntegral(node1, s1 - node1*params.ds, result, true); // Subtract the first part
-    relativeStrainIntegral(node2, s2 - node2*params.ds, result, false); // Add the end part
-
-    return;
-}
-
-void StaticSolver::nodalStrainIntegral(int node1, int node2, Eigen::Ref<TwistType> result) const
-{
-    VectorType strains(twistLength * (params.nNodes + 1));
-/*    while (node1 < node2)
-    {
-	if (node1 == 0) // First node
+	if (fixedConstraints[i].active)
 	{
-	    Eigen::Ref<const TwistType> f0 = nodeVectorConst(strains, 0);//strains.block<6, 1>(0, 0);
-	    Eigen::Ref<const TwistType> f1 = nodeVectorConst(strains, 1);
-	    Eigen::Ref<const TwistType> f2 = nodeVectorConst(strains, 2);
-	    result += params.ds*(5.0/12.0*f0 + 8.0/12.0*f1 - 1.0/12.0*f2);
+	    // Set up the matrix block
+	    for (int j = 0; j < twistLength; j++)
+	    {
+		Lf.coeffRef(ind.row(fixedConstraints[i].node, j),
+			    ind.col(i, j)) = 1;
+	    }
+	    // Set up the RHS
+	    se3unhat(fixedConstraints[i].g.log(), rhsInd.block(rhs.getMatRef(), i, 0));
 	}
-	else // General case
+	else
 	{
-	    Eigen::Ref<const TwistType> fprev = nodeVectorConst(strains, node1 - 1);
-	    Eigen::Ref<const TwistType> fk = nodeVectorConst(strains, node1);
-	    Eigen::Ref<const TwistType> fnext = nodeVectorConst(strains, node1 + 1);
-	    Eigen::Ref<const TwistType> fnext2 = nodeVectorConst(strains, node1 + 2);
-	    result += params.ds*(1.0/6.0*(fnext - fprev) + 11.0/12.0*fk + 1.0/12.0*fnext2);
+	    for (int j = 0; j < twistLength; j++)
+	    {
+		sigmaF.coeffRef(ind.row(i, j), ind.col(i, j));
+	    }
 	}
-	node1++;
-	}*/
-    return;
-}
-
-void StaticSolver::relativeStrainIntegral(int node, ScalarType x, Eigen::Ref<TwistType> result, bool subtract) const
-{
-    /*
-    VectorType strains(twistLength * (params.nNodes + 1));
-    if (node == 0) // Special case for the first segment
-    {
-	Eigen::Ref<const TwistType> f0 = nodeVectorConst(strains, 0);
-	Eigen::Ref<const TwistType> f1 = nodeVectorConst(strains, 1);
-	Eigen::Ref<const TwistType> f2 = nodeVectorConst(strains, 2);
-
-	result += (subtract ? -1 : 1) * (x*f0 + x*x/(2*params.ds)*(f1 - f0) + x*x*x/(12*params.ds*params.ds)*(f2 + 2*f1 - 3*f0));
     }
-    else if (node < (params.nNodes - 1)) // General case for middle segments
-    {
-	Eigen::Ref<const TwistType> fprev = nodeVectorConst(strains, node - 1);
-	Eigen::Ref<const TwistType> fk = nodeVectorConst(strains, node);
-	Eigen::Ref<const TwistType> fnext = nodeVectorConst(strains, node + 1);
-	Eigen::Ref<const TwistType> fnext2 = nodeVectorConst(strains, node + 2);
-	result += (subtract ? -1 : 1) * (x*fk + x*x/(4*params.ds)*(fnext - fprev) + x*x*x/(12*params.ds*params.ds)*(fnext2 - fk + fnext - fprev));
-    }
-    // If node >= nNodes - 1, then we're at the tip, so do nothing at all */
-    return;
-}
+    // Add the values into the system matrix
+    mat.copyToBlock(Lf, BlockIndex::twist, BlockIndex::fixedConstraint);
+    mat.copyToBlock(Lf.transpose(), BlockIndex::fixedConstraint, BlockIndex::twist);
+    mat.copyToBlock(sigmaF, BlockIndex::fixedConstraint, BlockIndex::fixedConstraint);
+    Lf = strainEqnForcePreMultiplier * Lf;
+    mat.copyToBlock(Lf, BlockIndex::strain, BlockIndex::fixedConstraint);
 
-void StaticSolver::computeStrains()
-{
-    logger.startTimer("Solve Strain");
-    // Reconstruct the adjoint matrices
-    logger.startTimer("Adjoint Matrix");
-    generateAdjointMatrix();
-//    AfK = (Af * K).pruned();
-    logger.endTimer();
-
-    // The last vector in our forces vector holds the boundary condition (strain at the imaginary (n+1)th node)
-    /*  SingleMatrixType invK = SingleMatrixType(K.topLeftCorner(Sizes::entriesPerVector,
-							     Sizes::entriesPerVector)).inverse();
-    nodeVector(forces, -1) = -(nodeVector(strains, -2) - ds/2*invK*(nodeVector(forces, -2)));
-    */    
-/*    // Compute
-    logger.startTimer("compute");
-    sparseLuSolver.compute((EinvKD - AfK).pruned());
-    logger.endTimer();
-    logger.startTimer("compute RHS");
-    VectorType rhs = -(AfK * freeStrains) - forces;
-    logger.endTimer();
-    strains = sparseLuSolver.solve(rhs);
-    logger.endTimer();*/
-    
-    return;
-}
-
-void StaticSolver::computeDeformation()
-{
-    TwistType integratedStrain;
-    CoordType integratedStrainHat = CoordType::Zero();
-/*    for (int node = baseNode - 1; node >= 0; node--)
-    {
-	integratedStrain.setZero();
-	nodalStrainIntegral(node, node + 1, integratedStrain);
-	se3hat(integratedStrain, integratedStrainHat);
-	gBody[node] = gBody[node+1]*(-integratedStrainHat.exp());
-    }
-    for (int node = baseNode + 1; node < params.nNodes; node++)
-    {
-	integratedStrain.setZero();
-	nodalStrainIntegral(node - 1, node, integratedStrain);
-	se3hat(integratedStrain, integratedStrainHat);
-	gBody[node] = gBody[node-1]*integratedStrainHat.exp();
-	}*/
     return;
 }
 

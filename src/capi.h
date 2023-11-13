@@ -5,39 +5,34 @@
 #ifndef COSSOLVE_CAPI_H
 #define COSSOLVE_CAPI_H
 
-#include "Solver.h"
+#include "StaticSolver.h"
 
 extern "C" {
 
-    // Hide these in an anonymous namespace to avoid polluting the global namespace
-    typedef cossolve::Solver::ScalarType ScalarType;
+    typedef cossolve::ScalarType ScalarType;
     typedef void* SolverHandle;
 
-    // Wrapper to construct a Solver
-    SolverHandle cossolve_createSolver(int nNodes, ScalarType tensileModulus, ScalarType poissonRatio,
-				       ScalarType shearModulus, ScalarType momentX, ScalarType momentY,
-				       ScalarType momentZ, ScalarType area, ScalarType length,
-				       ScalarType linearDensity);
-
-    // Wrapper to destroy a Solver
-    void cossolve_deleteSolver(SolverHandle handle);
-
-    // Wrapper for Solver::addForce
-    void cossolve_Solver_addForce(SolverHandle handle, ScalarType s, ScalarType* force, bool bodyFrame);
-
-    // Wrapper for StaticSolver::addFixedConstraint
-//    void cossolve_Solver_addFixedConstraint(SolverHandle handle, int node, 
-    
-    // Fills the passed ScalarType array with the strain vector from this solver
-    void cossolve_getStrains(SolverHandle handle, ScalarType* outArray);
-    void cossolve_getCoords(SolverHandle handle, ScalarType* outArray);
-    int cossolve_getNodeCount(SolverHandle handle);
-
-    // Wrapper for Solver::solveStrains
-    void cossolve_Solver_solveStrains(SolverHandle handle);
-
-    // Wrapper for Solver::solveCoords
-    void cossolve_Solver_solveCoords(SolverHandle handle);
+    SolverHandle cossolve_StaticSolver_construct(
+	int nNodes, ScalarType tensileModulus, ScalarType poissonRatio,
+	ScalarType shearModulus, ScalarType momentX, ScalarType momentY,
+	ScalarType momentZ, ScalarType area, ScalarType length,
+	ScalarType linearDensity
+	);
+    void cossolve_StaticSolver_delete(SolverHandle handle);
+    void cossolve_StaticSolver_addPointForce(SolverHandle handle, ScalarType s,
+					     ScalarType* force, bool bodyFrame);
+    void cossolve_StaticSolver_addDistributedForce(SolverHandle handle,
+						   ScalarType s1, ScalarType s2,
+						   ScalarType* force, bool bodyFrame);
+    void cossolve_StaticSolver_addFixedConstraint(SolverHandle handle, int node, ScalarType* g);
+    void cossolve_StaticSolver_getCoords(SolverHandle handle, ScalarType* outArray);
+    void cossolve_StaticSolver_getStrains(SolverHandle handle, ScalarType* outArray);
+    void cossolve_StaticSolver_getTwists(SolverHandle handle, ScalarType* outArray);
+    void cossolve_StaticSolver_getFixedConstraintForces(SolverHandle handle, ScalarType* outArray);
+    void cossolve_StaticSolver_getSystemMatrix(SolverHandle handle, ScalarType* outArray);
+    int cossolve_StaticSolver_getSystemRows(SolverHandle handle);
+    int cossolve_StaticSolver_getSystemCols(SolverHandle handle);
+    void cossolve_StaticSolver_solve(SolverHandle handle);
 }
 
 #endif // COSSOLVE_CAPI_H

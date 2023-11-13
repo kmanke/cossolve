@@ -83,7 +83,7 @@ namespace {
 template <AddDimType dim>
 void addDimSparse(SparseType& dst, int afterDim, int nDims)
 {
-        // Start by resizing the matrix to add the rows
+    // Start by resizing the matrix to add the rows
     if constexpr (dim == AddDimType::row)
     {
 	dst.conservativeResize(dst.rows() + nDims, dst.cols());
@@ -142,15 +142,15 @@ void addDimDense(DenseType& dst, int afterDim, int nDims)
 {
     if constexpr (dim == AddDimType::row)
     {
-	DenseType temp = dst.block(afterDim + 1, 0, dst.rows() - (afterDim + 1), dst.cols());
-	dst.conservativeResize(dst.rows() + nDims, dst.cols());
-	dst.bottomRows(dst.rows() - (afterDim + 1)) = temp;
+	DenseType temp = DenseType(dst.block(afterDim + 1, 0, dst.rows() - (afterDim + 1), dst.cols()));
+	dst.conservativeResize(dst.rows() + nDims, Eigen::NoChange);
+	dst.bottomRows(temp.rows()) = temp;
     }
     else if constexpr (dim == AddDimType::col)
     {
-	DenseType temp = dst.block(0, afterDim + 1, dst.rows(), dst.cols() - (afterDim + 1));
-	dst.conservativeResize(dst.rows(), dst.cols() + nDims);
-	dst.rightCols(dst.cols() - (afterDim + 1)) = temp;
+	DenseType temp = DenseType(dst.block(0, afterDim + 1, dst.rows(), dst.cols() - (afterDim + 1)));
+	dst.conservativeResize(Eigen::NoChange, dst.cols() + nDims);
+	dst.rightCols(temp.cols()) = temp;
     }
     return;
 }
@@ -162,10 +162,10 @@ void addBlockSparse(const SparseType& src, SparseType& dst,
 				int nRows, int nCols)
 {
     // Iterate through and add all values from src
-    int startOuter = (SparseType::IsRowMajor) ? srcStartRow : srcStartCol;
-    int endOuter = startOuter + ((SparseType::IsRowMajor) ? nRows : nCols);
-    int startInner = (SparseType::IsRowMajor) ? srcStartCol : srcStartRow;
-    int endInner = startInner + ((SparseType::IsRowMajor) ? nCols : nRows);
+    int startOuter = (src.IsRowMajor) ? srcStartRow : srcStartCol;
+    int endOuter = startOuter + ((src.IsRowMajor) ? nRows : nCols);
+    int startInner = (src.IsRowMajor) ? srcStartCol : srcStartRow;
+    int endInner = startInner + ((src.IsRowMajor) ? nCols : nRows);
     int deltaRow = dstStartRow - srcStartRow;
     int deltaCol = dstStartCol - srcStartCol;
     for (int outer = startOuter; outer < endOuter; outer++)

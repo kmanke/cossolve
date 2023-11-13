@@ -24,6 +24,7 @@
 #include <string_view>
 #include <sstream>
 #include <iomanip>
+#include <stack>
 
 namespace cossolve {
 
@@ -49,15 +50,18 @@ public:
     // Begins a timer for performance measurement
     void startTimer(std::string&& label)
     {
-	timerLabel = std::move(label);
-	startTime = std::chrono::high_resolution_clock::now();
+	timerStack.push(TimerStack::value_type
+			(std::chrono::high_resolution_clock::now(), std::move(label)));
+	return;
     }
     // Ends the timer started by startTimer
     void endTimer()
     {
-	endTime = std::chrono::high_resolution_clock::now();
-	auto us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-	log() << timerPrefix << timerLabel << timerPostfix
+	auto endTime = std::chrono::high_resolution_clock::now();
+	TimerStack::value_type timer = std::move(timerStack.top());
+	timerStack.pop();
+	auto us = std::chrono::duration_cast<std::chrono::microseconds>(endTime - timer.first);
+	log() << timerPrefix << timer.second << timerPostfix
 	      << us.count() << timerUnits;
     }
 
@@ -68,10 +72,11 @@ public:
     }
 
 private:
+    using TimerStack = std::stack
+	<std::pair<std::chrono::time_point<std::chrono::high_resolution_clock>, std::string>>;
+    
     std::ostream& out;
-    std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
-    std::chrono::time_point<std::chrono::high_resolution_clock> endTime;
-    std::string timerLabel;
+    TimerStack timerStack;
 
     static constexpr std::string_view logLevelLabels[] =
     {
