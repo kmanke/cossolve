@@ -6,37 +6,30 @@ import matplotlib.pyplot as plt
 
 numpy.set_printoptions(threshold=sys.maxsize, precision=1, linewidth=300, suppress=False)
 
-num_nodes = 20
+num_nodes = 50
+num_its = 3
 
 solver = cossolve.Solver(num_nodes, 100e6, .3, 0, 2*.01**4/12, .01**4/12, .01**4/12, .01**2, 1, 0.005)
 
 # Add a fixed constraint at the left end
 g = numpy.eye(4, order='F')
 g[0, 3] = 1
-g[2, 3] = -0.01
-solver.add_fixed_constraint(19, g)
+g[2, 3] = 0
+solver.add_fixed_constraint(49, g)
 
-F = -0.1
+F = -.1
 force = numpy.array([0, 0, F*.5, 0, 0, 0])
 
-#solver.add_point_force(0.5, force, True)
+solver.add_point_force(.5, force, True)
 
-solver.solve()
-solver.solve()
-solver.solve()
-solver.solve()
-solver.solve()
-solver.solve()
-solver.solve()
+for i in range(0, num_its):
+    solver.solve()
 
 strains = solver.get_strains()
 twists = solver.get_twists()
 reactions = solver.get_fixed_constraint_forces()
 sysmat = solver.get_system_matrix()
 coords = solver.get_coords()
-
-#print(sysmat[0:24, 24:48])
-print(reactions)
 
 x = numpy.linspace(0, 1, 100);
 y = F*x**2*(3-x)/(6*100e6*.01**4/12);

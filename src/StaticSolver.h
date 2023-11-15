@@ -40,7 +40,7 @@ public:
     inline Eigen::Ref<const VectorType> getStrains() const
 	{ return lhs.getBlock(BlockIndex::strain, 0); }
     inline Eigen::Ref<const VectorType> getTwists() const
-	{ return phiToKsi*lhs.getBlock(BlockIndex::phi, 0); }
+	{ return lhs.getBlock(BlockIndex::twist, 0); }
     inline Eigen::Ref<const VectorType> getFixedConstraintForces() const
 	{ return lhs.getBlock(BlockIndex::fixedConstraint, 0); }
     inline const SparseType& getSystemMatrix() const { return mat.getMat(); }
@@ -71,9 +71,10 @@ public:
 private:
     struct BlockIndex
     {
-	static constexpr int phi = 0;
-	static constexpr int strain = 1;
-	static constexpr int fixedConstraint = 2;
+	static constexpr int twist = 0;
+	static constexpr int phi = 1;
+	static constexpr int strain = 2;
+	static constexpr int fixedConstraint = 3;
     };
     // Useful utilities
     Logger<LogLevel::debug> logger;
@@ -99,15 +100,17 @@ private:
     // These submatrices need to be held onto to update the system matrix
     SparseType I; // 6*nNodes x 6*nNodes identity matrix, we need this somewhat often
     SparseType K; // Stiffness matrix
-    SparseType AfK; // A*K
-    SparseType Hinv;
-    SparseType phiToKsi;
+    SparseType H;
+    SparseType Jphi;
+    SparseType Jksi;
     SparseType Lf; // Fixed constraint location matrix
-    SparseType EKinv;
-    SparseType EKinvAfK; // E*K^-1*A*K
+    SparseType Jf;
+    SparseType EKinv;   // E*K^-1
+    SparseType EKinvJf; // E*K^-1*Jf
     SparseType strainEqnFreeStrainPreMultiplier;
 
     // Solvers
+    //Eigen::SparseLU<SparseType> sparseLuSolver;
     SparseLUSolver<SparseType> sparseLuSolver;
     
     // Initializes the coordinate transformations and free strains to initial values.

@@ -20,6 +20,7 @@
 #include "LieGroupOps.h"
 #include "MatrixOps.h"
 #include "Indexer.h"
+#include "TwistJacobian.h"
 
 #include <eigen3/unsupported/Eigen/MatrixFunctions>
 
@@ -41,7 +42,6 @@ StaticSolver::StaticSolver(SolverParameters&& params)
     initSystemMatrix();
     
     logger.endTimer();
-
     return;
 }
 
@@ -148,38 +148,28 @@ void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
 void StaticSolver::solve()
 {
     logger.startTimer("solve");
+    rhs.clearBlock(BlockIndex::twist, 0);
     rhs.clearBlock(BlockIndex::phi, 0);
     rhs.clearBlock(BlockIndex::strain, 0);
     updateStrainAdjoint();
     updateTwistAdjoint();
     updateAppliedForces();
-    
-    sparseLuSolver.compute(mat.getMat());
-    lhs.getMatRef() = sparseLuSolver.solve(rhs.getMat());
 
-    // Update the coordinates
-    /*Indexer ind = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
-    for (int i = 1; i < params.nNodes; i++)
+    sparseLuSolver.compute(mat.getMat());
+    if (sparseLuSolver.info() != Eigen::ComputationInfo::Success)
     {
-	TwistType lastKsi = ind.block(lhs.getMat(), i-1, 0);
-	TwistType thisKsi = ind.block(lhs.getMat(), i, 0);
-	TwistType deltaKsi = thisKsi - lastKsi;
-	logger.log() << deltaKsi;
-	CoordType fHat;
-	se3hat(deltaKsi, fHat);
-	gBody[i] = gBody[i-1]*(fHat.exp());
-	}*/
-//    updateTwistAdjoint();
-    DenseType ksi = phiToKsi * lhs.getBlock(BlockIndex::phi, 0);
-    Indexer ind = Indexer<twistLength, 1>(ksi.rows(), ksi.cols());
+	logger.log<LogLevel::fatal>() << "System computation failed!";
+    }
+    lhs.getMatRef() = sparseLuSolver.solve(rhs.getMat());
+    // Update the coordinates
+    Indexer ind = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
     for (int i = 0; i < params.nNodes; i++)
     {
 	CoordType ksiHat = CoordType::Zero();
-	se3hat(ind.block(ksi, i, 0), ksiHat);
+	se3hat(ind.block(lhs.getMat(), i, 0), ksiHat);
 	gBody[i] = ksiHat.exp();
     }
-    sparseLuSolver.compute(phiToKsi);
-    logger.log() << '\n' << DenseType(sparseLuSolver.solve(I));
+
     logger.endTimer();
     return;
 }
@@ -188,36 +178,50 @@ void StaticSolver::initCoordinates()
 {
     logger.startTimer("Coordinate initialization");
     // First, add the necessary blocks to the LHS and RHS vectors
-    lhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::phi));
-    lhs.addBlock<BlockDim::row>(fixedConstraints.size() * twistLength);
-    rhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::phi));
+    lhs = BlockMatrix<DenseType>(params.nNodes*twistLength, 1);
+    lhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist)); // Phi block
+    lhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist)); // Strain block
+    lhs.addBlock<BlockDim::row>(fixedConstraints.size() * twistLength); // Fixed constraint block
+    lhs.getMatRef().setZero();
+    rhs = BlockMatrix<DenseType>(params.nNodes*twistLength, 1);
+    rhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist));
+    rhs.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(BlockIndex::twist));
     rhs.addBlock<BlockDim::row>(fixedConstraints.size() * twistLength);
-    // Clear initial phi
-    lhs.clearBlock(BlockIndex::phi, 0);
+    rhs.getMatRef().setZero();
 
-    // Now we initialize free strain and coordinate transformations
+    // Now we initialize free strain and twists
     fStar = DenseType::Zero(twistLength * params.nNodes, 1);
-    Indexer fsInd = Indexer<twistLength, 1>(fStar.rows(), fStar.cols());
-    Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
     gBody = std::vector<CoordType>(params.nNodes);
     Eigen::Vector<ScalarType, 3> p {0, 0, 0};
-    for (auto gBodyIt = gBody.begin(); gBodyIt != gBody.end(); ++gBodyIt)
+    Indexer fsInd = Indexer<twistLength, 1>(fStar.rows(), fStar.cols());
+    Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
+    Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
+    for (int i = 0; i < params.nNodes; i++)
     {
-	*gBodyIt = CoordType::Identity();
-	(*gBodyIt).block<3, 1>(0, 3) = p;
+	// Initial coordinate
+	gBody[i] = CoordType::Identity();
+	gBody[i].block<3, 1>(0, 3) = p;
 	p(0) += params.length / params.nSegments;
+	// Initial twist
+	se3unhat(gBody[i].log(), twistInd.block(lhs.getMatRef(), i, 0));
     }
-    // Compute free strains based on initial geometry
+    // Compute free strain and phi based on initial geometry
     CoordType fHat;
     for (int i = 0; i < (params.nNodes - 1); i++)
     {
+	// Free strain
 	fHat = ((gBody[0].inverse()*gBody[i+1]).log() - (gBody[0].inverse()*gBody[i]).log()) / params.ds;
 	se3unhat(fHat, fsInd.block(fStar, i, 0));
+	// Phi
+	se3unhat((gBody[i].inverse()*gBody[i+1]).log(), phiInd.block(lhs.getMatRef(), i+1, 0));
     }
     // Set the free strain of the end to be the same as the previous node
     fsInd.block(fStar, -1, 0) = fsInd.block(fStar, -2, 0);
+    // Initial phi is equal to initial twist
+    phiInd.block(lhs.getMatRef(), 0, 0) = twistInd.block(lhs.getMat(), 0, 0);
     // Set initial strains to be equal to the initial free strains
     lhs.copyToBlock(fStar, BlockIndex::strain, 0);
+
     logger.endTimer();
     return;
 }
@@ -225,8 +229,11 @@ void StaticSolver::initCoordinates()
 void StaticSolver::initSystemMatrix()
 {
     logger.startTimer("System matrix initialization");
-    // Initialize the matrix and add blocks
+    // Initialize the matrix with the twist dimension
     mat = BlockMatrix<SparseType>(params.nNodes * twistLength, params.nNodes * twistLength);
+    // Add the phi dimension
+    mat.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(0));
+    mat.addBlock<BlockDim::col>(mat.blockSize<BlockDim::col>(0));
     // Add the strain dimension
     mat.addBlock<BlockDim::row>(mat.blockSize<BlockDim::row>(0));
     mat.addBlock<BlockDim::col>(mat.blockSize<BlockDim::col>(0));
@@ -236,7 +243,7 @@ void StaticSolver::initSystemMatrix()
 
     // Initialize the stiffness matrix
     K = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::phi),
-			      mat.blockSize<BlockDim::col>(BlockIndex::phi));
+		   mat.blockSize<BlockDim::col>(BlockIndex::phi));
     MatrixConstructorList initList;
     initList.add<DiagConstructor>(params.tensileModulus * params.area, 0, 0, K.rows(), twistLength);
     initList.add<DiagConstructor>(params.shearModulus * params.area, 1, 1, K.rows(), twistLength);
@@ -282,42 +289,47 @@ void StaticSolver::initSystemMatrix()
     initList.add<DiagConstructor>(1/params.ds, twistLength, 0, R.rows(), 1);
     constructMatrix(initList, R);
 
-    SparseType H = SparseType(K.rows(), K.cols());
+    H = SparseType(K.rows(), K.cols());
     initList.clear();
     initList.add<DiagConstructor>(1, 0, 0, H.rows(), 1);
     initList.add<DiagConstructor>(-1, twistLength, 0, H.rows(), 1);
     constructMatrix(initList, H);
-    
+
     // Begin moving the blocks into the system matrix
     SparseType EprimeInv = SparseType(K.rows(), K.cols());
     SparseType Kinv = SparseType(K.rows(), K.cols());
-    SparseType Einv = SparseType(K.rows(), K.cols());
     I = SparseType(K.rows(), K.cols());
     I.setIdentity();
-    sparseLuSolver.compute(Eprime);
+    sparseLuSolver.analyzePattern(Eprime);
+    sparseLuSolver.factorize(Eprime);
     EprimeInv = sparseLuSolver.solve(I);
-    sparseLuSolver.compute(K);
+    sparseLuSolver.analyzePattern(K);
+    sparseLuSolver.factorize(K);
     Kinv = sparseLuSolver.solve(I);
-    sparseLuSolver.compute(E);
-    Einv = sparseLuSolver.solve(I);
-    sparseLuSolver.compute(H);
-    Hinv = sparseLuSolver.solve(I);
 
     // Theses blocks need to be held onto for future calculations
     EKinv = (E*Kinv).pruned();
     strainEqnFreeStrainPreMultiplier = (K*EprimeInv*T).pruned();
-    Hinv = Hinv.pruned();
 
     // These blocks are constant or just have factors added to them, so we
     // can update them in place without needing to save
+    SparseType twistTwist = H.pruned();
     SparseType phiPhi = D.pruned();
     SparseType phiStrain = (-R).pruned();
     SparseType strainStrain = (K*EprimeInv*Dprime);
-    
+
+    mat.copyToBlock(twistTwist, BlockIndex::twist, BlockIndex::twist);
     mat.copyToBlock(phiPhi, BlockIndex::phi, BlockIndex::phi);
     mat.copyToBlock(phiStrain, BlockIndex::phi, BlockIndex::strain);
     mat.copyToBlock(strainStrain, BlockIndex::strain, BlockIndex::strain);
 
+    // Initialize the others, but no need to set them yet
+    Jksi = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::twist),
+		      mat.blockSize<BlockDim::col>(BlockIndex::twist));
+    Jphi = SparseType(Jksi);
+    Jf = SparseType(Jksi);
+    EKinvJf = SparseType(Jksi);
+    
     logger.endTimer();
     return;
 }
@@ -327,47 +339,51 @@ void StaticSolver::updateStrainAdjoint()
     // Before regenerating the adjoint matrix, we need to add the current
     // value of AK back into some submatrices
     logger.startTimer("updateStrainAdjoint");
-    mat.addToBlock(AfK, BlockIndex::strain, BlockIndex::strain);
-    mat.addToBlock(EKinvAfK, BlockIndex::phi, BlockIndex::strain);
+    mat.addToBlock(Jf, BlockIndex::strain, BlockIndex::strain);
+    mat.addToBlock(EKinvJf, BlockIndex::phi, BlockIndex::strain);
 
-    // Now we regenerate the adjoint matrix
-    SingleMatrixType adf;
-    Indexer strainIndexer = lhs.getIndexer<twistLength, 1>(BlockIndex::strain, 0);
+    // Now we regenerate the strain jacobian
+    SingleMatrixType Jtemp;
+    SingleMatrixType Kblock = K.block(0, 0, twistLength, twistLength);
+    Indexer strainInd = lhs.getIndexer<twistLength, 1>(BlockIndex::strain, 0);
     Eigen::Ref<DenseType> lhsRef = lhs.getMatRef();
-    SparseType Af = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::strain),
-			      mat.blockSize<BlockDim::col>(BlockIndex::strain));
-    Indexer Aindexer = Indexer<twistLength, twistLength>(Af.rows(), Af.cols());
+    Indexer Jindexer = Indexer<twistLength, twistLength>(Jf.rows(), Jf.cols());
+    DenseType initialTerm = DenseType(rhs.blockSize<BlockDim::row>(BlockIndex::strain), 1);
+    Indexer initInd = Indexer<twistLength, 1>(initialTerm.rows(), initialTerm.cols());
     TripletList triplets;
     for (int i = 0; i < params.nNodes; i++)
     {
-	adf.setZero();
-	adjoint(strainIndexer.block(lhsRef, i, 0), adf);
-	adf.transposeInPlace();
+	// Compute the new Jacobian and initial value
+	Eigen::Ref<const TwistType> f0 = strainInd.block(lhs.getMat(), i, 0);
+	Eigen::Ref<const TwistType> fs0 = initInd.block(fStar, i, 0);
+	Eigen::Ref<TwistType> init = initInd.block(initialTerm, i, 0);
+	computeStrainJacobian(f0, fs0, Kblock, Jtemp);
+	computeStrainInitialTerm(f0, fs0, Kblock, init);
 	for (int j = 0; j < twistLength; j++)
 	{
 	    for (int k = 0; k < twistLength; k++)
 	    {
-		if (adf(j, k) != 0)
+		ScalarType value = Jtemp(j, k);
+		if (value != 0)
 		{
-		    triplets.emplace_back(Aindexer.row(i) + j,
-					  Aindexer.col(i) + k, adf(j, k));
+		    triplets.emplace_back(Jindexer.row(i) + j,
+					  Jindexer.col(i) + k, value);
 		}
 	    }
 	}
     }
-    Af.setFromTriplets(triplets.cbegin(), triplets.cend());
-    AfK = (Af * K).pruned();
-    EKinvAfK = (EKinv*AfK).pruned();
+    Jf.setFromTriplets(triplets.cbegin(), triplets.cend());
+    EKinvJf = (EKinv*Jf).pruned();
 
-    // Update blocks that depend on AK
-    mat.subtractFromBlock(AfK, BlockIndex::strain, BlockIndex::strain);
-    mat.subtractFromBlock(EKinvAfK, BlockIndex::phi, BlockIndex::strain);
+    // Update blocks that depend on Jf
+    mat.subtractFromBlock(Jf, BlockIndex::strain, BlockIndex::strain);
+    mat.subtractFromBlock(EKinvJf, BlockIndex::phi, BlockIndex::strain);
 
     // Update RHS
-    DenseType rhsTemp = EKinvAfK*fStar;
-    rhs.subtractFromBlock(rhsTemp, BlockIndex::phi, 0);
-    rhsTemp = (AfK + strainEqnFreeStrainPreMultiplier)*fStar;
-    rhs.subtractFromBlock(rhsTemp, BlockIndex::strain, 0);
+    DenseType rhsTemp = initialTerm - Jf*lhs.getBlock(BlockIndex::strain, 0);
+    rhs.addToBlock(EKinv*rhsTemp, BlockIndex::phi, 0);
+    rhsTemp -= strainEqnFreeStrainPreMultiplier*fStar;
+    rhs.addToBlock(rhsTemp, BlockIndex::strain, 0);
 
     logger.endTimer();
     return;
@@ -376,69 +392,61 @@ void StaticSolver::updateStrainAdjoint()
 void StaticSolver::updateTwistAdjoint()
 {
     logger.startTimer("updateTwistAdjoint");
-    SingleMatrixType adPhi, adKsi;
     Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
-    SparseType Aphi = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::phi),
-				 mat.blockSize<BlockDim::col>(BlockIndex::phi));
-    SparseType Aksi = SparseType(Aphi);
-    Indexer Aindexer = Indexer<twistLength, twistLength>(Aphi.rows(), Aphi.cols());
-    TripletList phiTriplets, ksiTriplets;
-    TwistType ksi = phiInd.block(lhs.getMat(), 0, 0);
+    Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
+    Indexer Jindexer = Indexer<twistLength, twistLength>(Jphi.rows(), Jphi.cols());
+    SingleMatrixType Jtemp1, Jtemp2;
+    TripletList phiTriplets, twistTriplets;
+    DenseType initialTerm = DenseType(rhs.blockSize<BlockDim::row>(BlockIndex::twist), 1);
+    Indexer initInd = Indexer<twistLength, 1>(initialTerm.rows(), initialTerm.cols());
+    // Add the current jacobian back into the twist block
+    mat.addToBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
     // Do the first blocks
-    adPhi.setZero();
-    adjoint(ksi, adPhi);
     for (int j = 0; j < twistLength; j++)
     {
-	for (int k = 0; k < twistLength; k++)
-	{
-	    if (adPhi(j, k) != 0)
-	    {
-		phiTriplets.emplace_back(Aindexer.row(0) + j,
-					 Aindexer.col(0) + k, adPhi(j, k));
-	    }
-	}
+	phiTriplets.emplace_back(j, j, 1);
     }
+    initInd.block(initialTerm, 0, 0) = phiInd.block(lhs.getMat(), 0, 0);
     // Now do the inner blocks
     for (int i = 1; i < params.nNodes; i++)
     {
-	adPhi.setZero();
-	adKsi.setZero();
-	Eigen::Ref<const TwistType> phi = phiInd.block(lhs.getMat(), i, 0);
-	adjoint(ksi, adKsi);
-	adjoint(phi, adPhi);
-	// Update ksi according to the BCH formula
-	ksi += phi + (0.5*adKsi + 1.0/12.0*adKsi*adKsi - 1.0/12.0*adPhi*adKsi) * phi;
+	Eigen::Ref<const TwistType> ksi0 = twistInd.block(lhs.getMat(), i-1, 0);
+	Eigen::Ref<const TwistType> phi0 = phiInd.block(lhs.getMat(), i, 0);
+	Eigen::Ref<TwistType> init = initInd.block(initialTerm, i, 0);
+	// Calculate the individual Jacobian for ksi_(i-1)
+	computeTwistJacobian(ksi0, phi0, Jtemp1);
+	computePhiJacobian(ksi0, phi0, Jtemp2);
+	// Calculate the initial term
+	computeInitialTerm(ksi0, phi0, init);
 	// Copy the adjoint blocks over to the matrices
 	for (int j = 0; j < twistLength; j++)
 	{
 	    for (int k = 0; k < twistLength; k++)
 	    {
-		int row = Aindexer.row(i) + j;
-		int col = Aindexer.col(i) + k;
-		ScalarType value = adPhi(j, k);
-		if (value != 0)
+		int row = Jindexer.row(i) + j;
+		int col = Jindexer.col(i) + k;
+		ScalarType value = Jtemp2(j, k);
+		if (value != 0.0)
 		{
 		    phiTriplets.emplace_back(row, col, value);
 		}
-		value = adKsi(j, k);
-		if (value != 0)
+		col -= twistLength;
+		value = Jtemp1(j, k);
+		if (value != 0.0)
 		{
-		    ksiTriplets.emplace_back(row, col, value);
+		    twistTriplets.emplace_back(row, col, value);
 		}
 	    }
 	}
     }
-    // Update blocks
-    Aksi.setFromTriplets(ksiTriplets.cbegin(), ksiTriplets.cend());
-    Aphi.setFromTriplets(phiTriplets.cbegin(), phiTriplets.cend());
-    phiToKsi = Hinv*(I + 0.5*Aksi + 1.0/12.0*Aksi*Aksi - 1.0/12.0*Aphi*Aksi).pruned();
-    // Update the fixed constraint location matrix, if necessary
-    if (Lf.cols() > 0)
-    {
-	logger.log() << "About to update Lf";
-	mat.copyToBlock((Lf.transpose()*phiToKsi).pruned(), BlockIndex::fixedConstraint, BlockIndex::phi);
-	logger.log() << "Done updating Lf";
-    }
+    // Update system matrix
+    Jksi.setFromTriplets(twistTriplets.cbegin(), twistTriplets.cend());
+    Jphi.setFromTriplets(phiTriplets.cbegin(), phiTriplets.cend());
+    mat.subtractFromBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
+    mat.copyToBlock(-Jphi, BlockIndex::twist, BlockIndex::phi);
+    // Update RHS
+    rhs.copyToBlock(initialTerm - Jksi*lhs.getBlock(BlockIndex::twist, 0) - Jphi*lhs.getBlock(BlockIndex::phi, 0),
+		    BlockIndex::twist, 0);
     logger.endTimer();
     return;
 }
@@ -477,11 +485,6 @@ void StaticSolver::updateAppliedForces()
 
 void StaticSolver::updateFixedConstraints()
 {
-    // If the twist adjoint matrix hasn't been initialized, do so now
-    if (phiToKsi.rows() != mat.blockSize<BlockDim::row>(BlockIndex::phi))
-    {
-	updateTwistAdjoint();
-    }
     // We start by clearing the row and column of the block matrix associated with
     // the fixed constraints.
     mat.clearDim<BlockDim::row>(BlockIndex::fixedConstraint);
@@ -506,9 +509,6 @@ void StaticSolver::updateFixedConstraints()
 	    }
 	    // Set up the RHS
 	    se3unhat(fixedConstraints[i].g.log(), rhsInd.block(rhs.getMatRef(), i, 0));
-	    logger.log() << fixedConstraints[i].g;
-	    logger.log() << fixedConstraints[i].g.log();
-	    logger.log() << rhsInd.block(rhs.getMat(), i, 0);
 	}
 	else
 	{
@@ -520,7 +520,7 @@ void StaticSolver::updateFixedConstraints()
     }
     // Add the values into the system matrix
     mat.copyToBlock(EKinv*Lf, BlockIndex::phi, BlockIndex::fixedConstraint);
-    mat.copyToBlock(Lf.transpose()*phiToKsi, BlockIndex::fixedConstraint, BlockIndex::phi);
+    mat.copyToBlock(Lf.transpose(), BlockIndex::fixedConstraint, BlockIndex::twist);
     mat.copyToBlock(sigmaF, BlockIndex::fixedConstraint, BlockIndex::fixedConstraint);
     mat.copyToBlock(Lf, BlockIndex::strain, BlockIndex::fixedConstraint);
 

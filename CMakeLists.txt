@@ -78,4 +78,5 @@ target_sources(cossolve PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src/StaticSolver.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/BlockMatrix.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/MatrixConstructor.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/TwistJacobian.cpp"
 )

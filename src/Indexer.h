@@ -30,7 +30,7 @@ class Indexer
 public:
     Indexer(int nRows, int nCols)
 	: nRows(nRows), nCols(nCols), firstRow(0), firstCol(0),
-	  lastRow(nRows - 1), lastCol(nCols - 1) { }
+		lastRow(nRows - 1), lastCol(nCols - 1) { }
     Indexer(int nRows, int nCols, int firstRow, int firstCol)
 	: nRows(nRows), nCols(nCols), firstRow(firstRow), firstCol(firstCol),
 	  lastRow(firstRow + nRows - 1), lastCol(firstCol + nCols - 1) { }								
