@@ -40,7 +40,7 @@ public:
     inline Eigen::Ref<const VectorType> getStrains() const
 	{ return lhs.getBlock(BlockIndex::strain, 0); }
     inline Eigen::Ref<const VectorType> getTwists() const
-	{ return lhs.getBlock(BlockIndex::twist, 0); }
+	{ return phiToKsi*lhs.getBlock(BlockIndex::phi, 0); }
     inline Eigen::Ref<const VectorType> getFixedConstraintForces() const
 	{ return lhs.getBlock(BlockIndex::fixedConstraint, 0); }
     inline const SparseType& getSystemMatrix() const { return mat.getMat(); }
@@ -71,7 +71,7 @@ public:
 private:
     struct BlockIndex
     {
-	static constexpr int twist = 0;
+	static constexpr int phi = 0;
 	static constexpr int strain = 1;
 	static constexpr int fixedConstraint = 2;
     };
@@ -97,9 +97,14 @@ private:
     BlockMatrix<SparseType> mat; // Full system matrix
 
     // These submatrices need to be held onto to update the system matrix
+    SparseType I; // 6*nNodes x 6*nNodes identity matrix, we need this somewhat often
     SparseType K; // Stiffness matrix
-    SparseType AK; // A*K
-    SparseType strainEqnForcePreMultiplier;
+    SparseType AfK; // A*K
+    SparseType Hinv;
+    SparseType phiToKsi;
+    SparseType Lf; // Fixed constraint location matrix
+    SparseType EKinv;
+    SparseType EKinvAfK; // E*K^-1*A*K
     SparseType strainEqnFreeStrainPreMultiplier;
 
     // Solvers
@@ -113,7 +118,11 @@ private:
     
     // Regenerates the strain adjoint matrix, then updates all `mat` and `rhs` blocks
     // which depend on it.
-    void updateAdjoint();
+    void updateStrainAdjoint();
+
+    // Regenerates the phi and ksi adjoint matrices, then updates all blocks
+    // which depend on it.
+    void updateTwistAdjoint();
 
     // Updates the RHS with the current applied forces
     void updateAppliedForces();

@@ -27,9 +27,16 @@ void DiagConstructor::construct(SparseType& mat) const
     int endTemp = (endRow >= 0) ? endRow : (mat.rows() + endRow);
     while (row < endTemp)
     {
-	mat.coeffRef(row, col) = value;
-	col += stride;
-	row += stride;
+	if (col < mat.cols())
+	{
+	    mat.coeffRef(row, col) = value;
+	    col += stride;
+	    row += stride;
+	}
+	else
+	{
+	    break;
+	}
     }
     return;
 }

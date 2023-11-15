@@ -37,8 +37,6 @@ public:
     virtual void construct(SparseType& mat) const = 0;
 };
 
-using MatrixConstructorList = std::vector<std::unique_ptr<MatrixConstructor>>;
-
 // Subclass for initializing values along a diagonal
 class DiagConstructor : public MatrixConstructor
 {
@@ -74,6 +72,39 @@ private:
     int endCol;
     int stride;
 };
+
+class MatrixConstructorList
+{
+public:
+    MatrixConstructorList() { }
+    ~MatrixConstructorList() { }
+
+    // Adds a new MatrixConstructor to the list by calling the constructor
+    // with the specified args.
+    template <typename MatrixConstructorType, typename ...Args>
+    void add(Args... args);
+
+    // Clears the list.
+    inline void clear() { list.clear(); }
+
+    // Iterator access
+    inline auto begin() { return list.begin(); }
+    inline auto end() { return list.end(); }
+    inline auto cbegin() const { return list.cbegin(); }
+    inline auto cend() const { return list.cend(); }
+    
+private:
+    std::vector<std::unique_ptr<MatrixConstructor>> list;
+};
+
+// Implementation of templated member functions
+template <typename MatrixConstructorType, typename ...Args>
+void MatrixConstructorList::add(Args... args)
+{
+    list.emplace_back(
+	std::make_unique<MatrixConstructorType>(std::forward<Args>(args)...));
+    return;
+}
 
 } // namespace cossolve
     
