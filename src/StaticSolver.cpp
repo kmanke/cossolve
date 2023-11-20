@@ -81,11 +81,11 @@ void StaticSolver::addPointForce(ScalarType s, Eigen::Ref<const TwistType> force
     int node = std::round(s / params.ds);
     if (node == 0 || node == (params.nNodes - 1))
     {
-	addForce(s, 2*force/(params.ds*params.length));
+	addForce(s, 2*force/(params.ds*params.length), bodyFrame);
     }
     else
     {
-	addForce(s, force/(params.ds*params.length));
+	addForce(s, force/(params.ds*params.length), bodyFrame);
     }
     return;
 }
