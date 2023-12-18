@@ -47,18 +47,18 @@ class Solver:
         
     # Returns the strain vector as a numpy array.
     def get_strains(self):
-        strains = numpy.empty((self.num_nodes * 6, 1))
+        strains = numpy.empty((self.num_nodes * 6))
         libcossolve.cossolve_StaticSolver_getStrains(self.handle, ctypes.c_voidp(strains.ctypes.data))
         return strains
 
     # Returns the twist vector as a numpy array.
     def get_twists(self):
-        twists = numpy.empty((self.num_nodes * 6, 1))
+        twists = numpy.empty((self.num_nodes * 6))
         libcossolve.cossolve_StaticSolver_getTwists(self.handle, ctypes.c_voidp(twists.ctypes.data))
         return twists
 
     def get_fixed_constraint_forces(self):
-        forces = numpy.empty((6, 1))
+        forces = numpy.empty((6))
         libcossolve.cossolve_StaticSolver_getFixedConstraintForces(self.handle, ctypes.c_voidp(forces.ctypes.data))
         return forces
         
@@ -87,6 +87,10 @@ class Solver:
                                                               ctypes.c_bool(body_frame))
         return
 
+    def clear_forces(self):
+        libcossolve.cossolve_StaticSolver_clearForces(self.handle)
+        return
+    
     def add_fixed_constraint(self, node, g):
         libcossolve.cossolve_StaticSolver_addFixedConstraint(self.handle, ctypes.c_int(node),
                                                              ctypes.c_voidp(g.ctypes.data))

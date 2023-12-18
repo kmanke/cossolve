@@ -62,6 +62,9 @@ public:
     void addDistributedForce(ScalarType s1, ScalarType s2,
 			     Eigen::Ref<const TwistType> force, bool bodyFrame = true);
 
+    // Removes all forces from the rod.
+    void clearForces();
+    
     // Adds a fixed constraint to the rod.
     void addFixedConstraint(int node, Eigen::Ref<const CoordType> g);
     
@@ -77,7 +80,7 @@ private:
 	static constexpr int fixedConstraint = 3;
     };
     // Useful utilities
-    Logger<LogLevel::debug> logger;
+    Logger<LogLevel::info> logger;
 
     SolverParameters params;
     
@@ -130,10 +133,19 @@ private:
     // Updates the RHS with the current applied forces
     void updateAppliedForces();
 
+    // Updates the fixed constraint equations based on the current distance between
+    // the desired constraint and the actual geometry.
+    void updateFixedConstraints();
+    
     // Updates the system matrix to reflect changed fixed constraints.
     // This only needs to be called when fixed constraints change. There is no need
     // to call it every iteration.
-    void updateFixedConstraints();
+    void generateFixedConstraints();
+
+    // Updates the body coordinate transformations based on current strains.
+    // The ksi vector will be updated to reflect the actual change since the
+    // last iteration.
+    void updateCoordinates();
 };
 
 } // namespace cossolve

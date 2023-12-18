@@ -67,6 +67,12 @@ void adjoint(Eigen::Ref<const Eigen::Matrix<double, 6, 1>> x, Eigen::Ref<Eigen::
 // Overload of adjoint for sparse matrices.
 void adjoint(Eigen::Ref<const Eigen::Matrix<double, 6, 1>> x, Eigen::Ref<Eigen::SparseMatrix<double>> adx);
 
+// For inverses of matrices in se3, we can use a simplified form which is very computationally cheap.
+// Inputs:
+//   g - matrix in se(3)
+//   gInv - 4x4 matrix to store the result.
+void se3inv(Eigen::Ref<const Eigen::Matrix<double, 4, 4>> g, Eigen::Ref<Eigen::Matrix<double, 4, 4>> gInv);
+
 } // namespace cossolve
 
 #endif // COSSOLVE_LIE_GROUP_OPS_H

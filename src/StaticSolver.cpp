@@ -20,7 +20,7 @@
 #include "LieGroupOps.h"
 #include "MatrixOps.h"
 #include "Indexer.h"
-#include "TwistJacobian.h"
+#include "Precomputed.h"
 
 #include <eigen3/unsupported/Eigen/MatrixFunctions>
 
@@ -79,14 +79,8 @@ void StaticSolver::addPointForce(ScalarType s, Eigen::Ref<const TwistType> force
     // If the force is being placed at the end, we need to double it
     // since the end covers only half a segment.
     int node = std::round(s / params.ds);
-    if (node == 0 || node == (params.nNodes - 1))
-    {
-	addForce(s, 2*force/(params.ds*params.length), bodyFrame);
-    }
-    else
-    {
-	addForce(s, force/(params.ds*params.length), bodyFrame);
-    }
+    addForce(s, force/(params.ds*params.length), bodyFrame);
+    
     return;
 }
 
@@ -116,6 +110,12 @@ void StaticSolver::addDistributedForce(ScalarType s1, ScalarType s2,
     return;
 }
 
+void StaticSolver::clearForces()
+{
+    appliedForces.clear();
+    return;
+}
+
 void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
 {
     // Add the new constraint to the list
@@ -140,7 +140,7 @@ void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
     rhs.enlargeBlock<BlockDim::row>(BlockIndex::fixedConstraint,
 				    rhs.blockSize<BlockDim::row>(BlockIndex::fixedConstraint) - 1,
 				    twistLength);
-    updateFixedConstraints();
+    generateFixedConstraints();
     logger.endTimer();
     return;
 }
@@ -148,28 +148,26 @@ void StaticSolver::addFixedConstraint(int node, Eigen::Ref<const CoordType> g)
 void StaticSolver::solve()
 {
     logger.startTimer("solve");
+
+    // Prepare
     rhs.clearBlock(BlockIndex::twist, 0);
     rhs.clearBlock(BlockIndex::phi, 0);
     rhs.clearBlock(BlockIndex::strain, 0);
     updateStrainAdjoint();
     updateTwistAdjoint();
     updateAppliedForces();
+    updateFixedConstraints();
 
+    // Solve
     sparseLuSolver.compute(mat.getMat());
     if (sparseLuSolver.info() != Eigen::ComputationInfo::Success)
     {
 	logger.log<LogLevel::fatal>() << "System computation failed!";
     }
     lhs.getMatRef() = sparseLuSolver.solve(rhs.getMat());
-    // Update the coordinates
-    Indexer ind = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
-    for (int i = 0; i < params.nNodes; i++)
-    {
-	CoordType ksiHat = CoordType::Zero();
-	se3hat(ind.block(lhs.getMat(), i, 0), ksiHat);
-	gBody[i] = ksiHat.exp();
-    }
 
+    updateCoordinates();
+    
     logger.endTimer();
     return;
 }
@@ -194,7 +192,6 @@ void StaticSolver::initCoordinates()
     gBody = std::vector<CoordType>(params.nNodes);
     Eigen::Vector<ScalarType, 3> p {0, 0, 0};
     Indexer fsInd = Indexer<twistLength, 1>(fStar.rows(), fStar.cols());
-    Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
     Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
     for (int i = 0; i < params.nNodes; i++)
     {
@@ -202,8 +199,6 @@ void StaticSolver::initCoordinates()
 	gBody[i] = CoordType::Identity();
 	gBody[i].block<3, 1>(0, 3) = p;
 	p(0) += params.length / params.nSegments;
-	// Initial twist
-	se3unhat(gBody[i].log(), twistInd.block(lhs.getMatRef(), i, 0));
     }
     // Compute free strain and phi based on initial geometry
     CoordType fHat;
@@ -217,8 +212,6 @@ void StaticSolver::initCoordinates()
     }
     // Set the free strain of the end to be the same as the previous node
     fsInd.block(fStar, -1, 0) = fsInd.block(fStar, -2, 0);
-    // Initial phi is equal to initial twist
-    phiInd.block(lhs.getMatRef(), 0, 0) = twistInd.block(lhs.getMat(), 0, 0);
     // Set initial strains to be equal to the initial free strains
     lhs.copyToBlock(fStar, BlockIndex::strain, 0);
 
@@ -394,47 +387,49 @@ void StaticSolver::updateTwistAdjoint()
     logger.startTimer("updateTwistAdjoint");
     Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
     Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
-    Indexer Jindexer = Indexer<twistLength, twistLength>(Jphi.rows(), Jphi.cols());
-    SingleMatrixType Jtemp1, Jtemp2;
+    Indexer Jind = Indexer<twistLength, twistLength>(Jphi.rows(), Jphi.cols());
+    SingleMatrixType JLksi, JRksi, JRphi;
     TripletList phiTriplets, twistTriplets;
-    DenseType initialTerm = DenseType(rhs.blockSize<BlockDim::row>(BlockIndex::twist), 1);
-    Indexer initInd = Indexer<twistLength, 1>(initialTerm.rows(), initialTerm.cols());
-    // Add the current jacobian back into the twist block
-    mat.addToBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
-    // Do the first blocks
+    // Reserve space in the lists to avoid reallocations
+    phiTriplets.reserve(params.nNodes*twistLength*twistLength);
+    twistTriplets.reserve(2*params.nNodes*twistLength*twistLength);
+    // Do the first block
     for (int j = 0; j < twistLength; j++)
     {
-	phiTriplets.emplace_back(j, j, 1);
+        twistTriplets.emplace_back(j, j, 1);
     }
-    initInd.block(initialTerm, 0, 0) = phiInd.block(lhs.getMat(), 0, 0);
     // Now do the inner blocks
     for (int i = 1; i < params.nNodes; i++)
     {
-	Eigen::Ref<const TwistType> ksi0 = twistInd.block(lhs.getMat(), i-1, 0);
-	Eigen::Ref<const TwistType> phi0 = phiInd.block(lhs.getMat(), i, 0);
-	Eigen::Ref<TwistType> init = initInd.block(initialTerm, i, 0);
+	Eigen::Ref<const TwistType> ksiPrev = twistInd.block(lhs.getMat(), i-1, 0);
+	Eigen::Ref<const TwistType> ksiCurrent = twistInd.block(lhs.getMat(), i, 0);
+	Eigen::Ref<const TwistType> phiCurrent = phiInd.block(lhs.getMat(), i, 0);
 	// Calculate the individual Jacobian for ksi_(i-1)
-	computeTwistJacobian(ksi0, phi0, Jtemp1);
-	computePhiJacobian(ksi0, phi0, Jtemp2);
-	// Calculate the initial term
-	computeInitialTerm(ksi0, phi0, init);
+	bchJacobian<2, 1>(phiCurrent, ksiCurrent, JLksi);
+	bchJacobian<2, 0>(ksiPrev, phiCurrent, JRksi);
+	bchJacobian<2, 1>(ksiPrev, phiCurrent, JRphi);
 	// Copy the adjoint blocks over to the matrices
 	for (int j = 0; j < twistLength; j++)
 	{
 	    for (int k = 0; k < twistLength; k++)
 	    {
-		int row = Jindexer.row(i) + j;
-		int col = Jindexer.col(i) + k;
-		ScalarType value = Jtemp2(j, k);
+		int row = Jind.row(i, j);
+		int col = Jind.col(i, k);
+		ScalarType value = JLksi(j, k);
+		if (value != 0.0)
+		{
+		    twistTriplets.emplace_back(row, col, value);
+		}
+		value = JRphi(j, k);
 		if (value != 0.0)
 		{
 		    phiTriplets.emplace_back(row, col, value);
 		}
 		col -= twistLength;
-		value = Jtemp1(j, k);
+		value = JRksi(j, k);
 		if (value != 0.0)
 		{
-		    twistTriplets.emplace_back(row, col, value);
+		    twistTriplets.emplace_back(row, col, -value);
 		}
 	    }
 	}
@@ -442,11 +437,12 @@ void StaticSolver::updateTwistAdjoint()
     // Update system matrix
     Jksi.setFromTriplets(twistTriplets.cbegin(), twistTriplets.cend());
     Jphi.setFromTriplets(phiTriplets.cbegin(), phiTriplets.cend());
-    mat.subtractFromBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
+    mat.copyToBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
     mat.copyToBlock(-Jphi, BlockIndex::twist, BlockIndex::phi);
     // Update RHS
-    rhs.copyToBlock(initialTerm - Jksi*lhs.getBlock(BlockIndex::twist, 0) - Jphi*lhs.getBlock(BlockIndex::phi, 0),
+    rhs.copyToBlock(Jksi*lhs.getBlock(BlockIndex::twist, 0) - Jphi*lhs.getBlock(BlockIndex::phi, 0),
 		    BlockIndex::twist, 0);
+    
     logger.endTimer();
     return;
 }
@@ -485,6 +481,32 @@ void StaticSolver::updateAppliedForces()
 
 void StaticSolver::updateFixedConstraints()
 {
+    // For each active constraint, we simply need to enforce that the twist
+    // is equal to the current discrepancy from the actual coordinate
+    Indexer rhsInd = rhs.getIndexer<twistLength, 1>(BlockIndex::fixedConstraint, 0);
+    CoordType g;
+    for (int i = 0; i < fixedConstraints.size(); i++)
+    {
+	if (fixedConstraints[i].active)
+	{
+	    se3inv(gBody[fixedConstraints[i].node], g);
+	    logger.log() << "Constraint " << i << " desired location:\n" << fixedConstraints[i].g;
+	    
+	    logger.log() << "Constraint " << i << " current offset:\n" << g*fixedConstraints[i].g;
+	    g = (g*fixedConstraints[i].g).log();
+	    se3unhat(g, rhsInd.block(rhs.getMatRef(), i, 0));
+	    logger.log() << "New twist:\n" << rhsInd.block(rhs.getMat(), i, 0);
+	}
+	else
+	{
+	    rhsInd.block(rhs.getMatRef(), i, 0).setZero(); 
+	}
+    }
+    return;
+}
+
+void StaticSolver::generateFixedConstraints()
+{
     // We start by clearing the row and column of the block matrix associated with
     // the fixed constraints.
     mat.clearDim<BlockDim::row>(BlockIndex::fixedConstraint);
@@ -496,7 +518,6 @@ void StaticSolver::updateFixedConstraints()
     SparseType sigmaF = SparseType(mat.blockSize<BlockDim::row>(BlockIndex::fixedConstraint),
 				   mat.blockSize<BlockDim::col>(BlockIndex::fixedConstraint));
     Indexer ind = Indexer<twistLength, twistLength>(Lf.rows(), Lf.cols());
-    Indexer rhsInd = rhs.getIndexer<twistLength, 1>(BlockIndex::fixedConstraint, 0);
     for (int i = 0; i < fixedConstraints.size(); i++)
     {
 	if (fixedConstraints[i].active)
@@ -507,8 +528,6 @@ void StaticSolver::updateFixedConstraints()
 		Lf.coeffRef(ind.row(fixedConstraints[i].node, j),
 			    ind.col(i, j)) = 1;
 	    }
-	    // Set up the RHS
-	    se3unhat(fixedConstraints[i].g.log(), rhsInd.block(rhs.getMatRef(), i, 0));
 	}
 	else
 	{
@@ -524,6 +543,26 @@ void StaticSolver::updateFixedConstraints()
     mat.copyToBlock(sigmaF, BlockIndex::fixedConstraint, BlockIndex::fixedConstraint);
     mat.copyToBlock(Lf, BlockIndex::strain, BlockIndex::fixedConstraint);
 
+    return;
+}
+
+void StaticSolver::updateCoordinates()
+{
+    CoordType gInv, expPhiHat, ksiHat;
+    Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
+    Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
+    for (int i = 1; i < params.nNodes; i++)
+    {
+	// Save the inverse of the coordinate from the previous iteration
+	se3inv(gBody[i], gInv);
+	// Update the coordinate
+	se3hat(phiInd.block(lhs.getMat(), i, 0), expPhiHat);
+	expPhiHat = expPhiHat.exp();
+	gBody[i] = gBody[i-1]*expPhiHat;
+	// Update ksi
+	//se3unhat((gInv*gBody[i]).log(), twistInd.block(lhs.getMatRef(), i, 0));
+	twistInd.block(lhs.getMatRef(), i, 0).setZero();
+    }
     return;
 }
 

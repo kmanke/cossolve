@@ -40,6 +40,12 @@ void cossolve_StaticSolver_addDistributedForce(SolverHandle handle, ScalarType s
     return;
 }
 
+void cossolve_StaticSolver_clearForces(SolverHandle handle)
+{
+    reinterpret_cast<StaticSolver*>(handle)->clearForces();
+    return;
+}
+
 void cossolve_StaticSolver_addFixedConstraint(SolverHandle handle, int node, ScalarType* g)
 {
     reinterpret_cast<StaticSolver*>(handle)->addFixedConstraint(node, CoordType(g));

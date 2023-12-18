@@ -1,5 +1,4 @@
-/* Here we define functions to calculate the Jacobians for estimating
- * twist as a function of phi.
+/* Here we define precomputed functions and linearizations.
  *
  * Copyright (C) 2023 Kyle Manke
  *
@@ -17,19 +16,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef COSSOLVE_TWIST_JACOBIAN_H
-#define COSSOLVE_TWIST_JACOBIAN_H
+#ifndef COSSOLVE_PRECOMPUTED_H
+#define COSSOLVE_PRECOMPUTED_H
 
 #include "CossolveTypes.h"
 
 namespace cossolve {
 
-// Twist jacobians
-void computePhiJacobian(Eigen::Ref<const TwistType> ksi0, Eigen::Ref<const TwistType> phi0,
-			SingleMatrixType& Jphi);
-void computeTwistJacobian(Eigen::Ref<const TwistType> ksi0, Eigen::Ref<const TwistType> phi0,
-			  SingleMatrixType& Jksi);
-void computeInitialTerm(Eigen::Ref<const TwistType> ksi0, Eigen::Ref<const TwistType> phi0, Eigen::Ref<TwistType> res);
+// BCH approximations
+// This function computes the Jacobian of the BCH formula to the specified order with respect
+// to the specified argument (0 for the first argument, 1 for the second)
+template <unsigned order, unsigned argument>
+void bchJacobian(Eigen::Ref<const TwistType> x0, Eigen::Ref<const TwistType> y0,
+		 SingleMatrixType& J);
 
 // Strain jacobians
 void computeStrainJacobian(Eigen::Ref<const TwistType> strain0, Eigen::Ref<const TwistType> freeStrain0,
@@ -39,4 +38,4 @@ void computeStrainInitialTerm(Eigen::Ref<const TwistType> strain0, Eigen::Ref<co
 
 } // namespace cossolve
 
-#endif // COSSOLVE_TWIST_JACOBIAN_H
+#endif // COSSOLVE_PRECOMPUTED_H

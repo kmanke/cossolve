@@ -24,6 +24,7 @@ extern "C" {
     void cossolve_StaticSolver_addDistributedForce(SolverHandle handle,
 						   ScalarType s1, ScalarType s2,
 						   ScalarType* force, bool bodyFrame);
+    void cossolve_StaticSovler_clearForces(SolverHandle handle);
     void cossolve_StaticSolver_addFixedConstraint(SolverHandle handle, int node, ScalarType* g);
     void cossolve_StaticSolver_getCoords(SolverHandle handle, ScalarType* outArray);
     void cossolve_StaticSolver_getStrains(SolverHandle handle, ScalarType* outArray);

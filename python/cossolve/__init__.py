@@ -29,6 +29,7 @@ libcossolve.cossolve_StaticSolver_construct.restype = ctypes.c_voidp
 libcossolve.cossolve_StaticSolver_delete.restype = None
 libcossolve.cossolve_StaticSolver_addPointForce.restype = None
 libcossolve.cossolve_StaticSolver_addDistributedForce.restype = None
+libcossolve.cossolve_StaticSolver_clearForces.restype = None
 libcossolve.cossolve_StaticSolver_addFixedConstraint.restype = None
 libcossolve.cossolve_StaticSolver_getCoords.resType = ctypes.c_voidp
 libcossolve.cossolve_StaticSolver_getStrains.resType = ctypes.c_voidp

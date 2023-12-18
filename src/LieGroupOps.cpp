@@ -32,6 +32,11 @@ void so3hat(Eigen::Ref<const Eigen::Matrix<double, 3, 1>> x, Eigen::Ref<Eigen::M
     xhat(1, 2) = -x(0);
     xhat(2, 1) = x(0);
 
+    // Diagonal gets zeroed
+    xhat(0, 0) = 0;
+    xhat(1, 1) = 0;
+    xhat(2, 2) = 0;
+
     return;
 }
 
@@ -39,6 +44,9 @@ void se3hat(Eigen::Ref<const Eigen::Matrix<double, 6, 1>> x, Eigen::Ref<Eigen::M
 {
     so3hat(x.block<3, 1>(3, 0), xhat.block<3, 3>(0, 0));
     xhat.block<3, 1>(0, 3) = x.block<3, 1>(0, 0);
+
+    // Bottom row gets zeroed
+    xhat.block<1, 4>(3, 0).setZero();
     
     return;
 }
@@ -69,6 +77,9 @@ void Adjoint(Eigen::Ref<const Eigen::Matrix<double, 4, 4>> g, Eigen::Ref<Eigen::
     Adg.block<3, 3>(3, 3) = Adg.block<3, 3>(0, 0);
     Adg.block<3, 3>(0, 3) = phat * g.block<3, 3>(0, 0);
 
+    // Bottom left 3x3 block gets zeroed
+    Adg.block<3, 3>(3, 0).setZero();
+
     return;
 }
 
@@ -78,6 +89,19 @@ void adjoint(Eigen::Ref<const Eigen::Matrix<double, 6, 1>> x, Eigen::Ref<Eigen::
     so3hat(x.block<3, 1>(0, 0), adx.block<3, 3>(0, 3));
     adx.block<3, 3>(3, 3) = adx.block<3, 3>(0, 0);
 
+    // Bottom left 3x3 block gets zeroed
+    adx.block<3, 3>(3, 0).setZero();
+    
+    return;
+}
+
+void se3inv(Eigen::Ref<const Eigen::Matrix<double, 4, 4>> g, Eigen::Ref<Eigen::Matrix<double, 4, 4>> gInv)
+{
+    gInv.block<3, 3>(0, 0) = g.block<3, 3>(0, 0).transpose();
+    gInv.block<3, 1>(0, 3) = -(gInv.block<3, 3>(0, 0)*g.block<3, 1>(0, 3));
+    gInv.block<1, 3>(3, 0).setZero();
+    gInv(3, 3) = 1;
+    
     return;
 }
 
