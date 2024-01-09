@@ -92,7 +92,7 @@ public:
     int getIndex(int blockIndex, int index, int stride = 1, int offset = 0);
 
     template <unsigned rowStride, unsigned colStride>
-    Indexer<rowStride, colStride> getIndexer(int blockRow, int blockCol);
+    Indexer<rowStride, colStride> getIndexer(int blockRow, int blockCol) const;
     
 private:
     // This structure holds the offsets and sizes of each sub dimension
@@ -320,7 +320,7 @@ int BlockMatrix<MatrixType>::getIndex(int blockIndex, int index, int stride, int
 
 template <typename MatrixType>
 template <unsigned rowStride, unsigned colStride>
-Indexer<rowStride, colStride> BlockMatrix<MatrixType>::getIndexer(int blockRow, int blockCol)
+Indexer<rowStride, colStride> BlockMatrix<MatrixType>::getIndexer(int blockRow, int blockCol) const
 {
     return Indexer<rowStride, colStride>(subRows[blockRow].count, subCols[blockCol].count,
 					 subRows[blockRow].first, subCols[blockCol].first);

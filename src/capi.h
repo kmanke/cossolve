@@ -34,6 +34,7 @@ extern "C" {
     int cossolve_StaticSolver_getSystemRows(SolverHandle handle);
     int cossolve_StaticSolver_getSystemCols(SolverHandle handle);
     void cossolve_StaticSolver_solve(SolverHandle handle);
+    ScalarType cossolve_StaticSolver_convergenceParameter(SolverHandle handle);
 }
 
 #endif // COSSOLVE_CAPI_H

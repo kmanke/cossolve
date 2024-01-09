@@ -112,4 +112,9 @@ void cossolve_StaticSolver_solve(SolverHandle handle)
     return;
 }
 
+ScalarType cossolve_StaticSolver_convergenceParameter(SolverHandle handle)
+{
+    return reinterpret_cast<StaticSolver*>(handle)->convergenceParameter();
+}
+    
 }

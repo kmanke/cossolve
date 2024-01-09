@@ -70,6 +70,11 @@ public:
     
     // Solves the system
     void solve();
+
+    // Returns the convergence parameter of the last iteration.
+    // The convergence parameter is defined as:
+    //   psi = 1/n*1/2*(tr(I - R_e) + ||p_e||^2)
+    ScalarType convergenceParameter() const;
     
 private:
     struct BlockIndex
@@ -96,6 +101,7 @@ private:
     BlockMatrix<DenseType> rhs;
     DenseType fStar;
     std::vector<CoordType> gBody; // From body to spatial
+    
     
     // System parameter matrices
     BlockMatrix<SparseType> mat; // Full system matrix

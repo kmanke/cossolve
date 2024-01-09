@@ -172,6 +172,26 @@ void StaticSolver::solve()
     return;
 }
 
+ScalarType StaticSolver::convergenceParameter() const
+{
+    // Calculate the convergence parameter for each node
+    Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
+    CoordType xiHat;
+    CoordType error;
+    ScalarType param = 0;
+    
+    for (int n = 0; n < params.nNodes; n++)
+    {
+	se3hat(twistInd.block(lhs.getMat(), n, 0), xiHat);
+	error = xiHat.exp();
+	param += 3 - error(0, 0) - error(1, 1) - error(2, 2) +
+	    error(0, 3)*error(0, 3) + error(1, 3)*error(1, 3) + error(2, 3)*error(2, 3);
+    }
+    param *= 0.5/params.nNodes;
+    param = std::log10(param);
+    return param;
+}
+
 void StaticSolver::initCoordinates()
 {
     logger.startTimer("Coordinate initialization");
@@ -388,7 +408,7 @@ void StaticSolver::updateTwistAdjoint()
     Indexer phiInd = lhs.getIndexer<twistLength, 1>(BlockIndex::phi, 0);
     Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
     Indexer Jind = Indexer<twistLength, twistLength>(Jphi.rows(), Jphi.cols());
-    SingleMatrixType JLksi, JRksi, JRphi;
+    SingleMatrixType J1, J2, J3;
     TripletList phiTriplets, twistTriplets;
     // Reserve space in the lists to avoid reallocations
     phiTriplets.reserve(params.nNodes*twistLength*twistLength);
@@ -399,15 +419,14 @@ void StaticSolver::updateTwistAdjoint()
         twistTriplets.emplace_back(j, j, 1);
     }
     // Now do the inner blocks
+    TwistType zero = TwistType::Zero();
     for (int i = 1; i < params.nNodes; i++)
     {
-	Eigen::Ref<const TwistType> ksiPrev = twistInd.block(lhs.getMat(), i-1, 0);
-	Eigen::Ref<const TwistType> ksiCurrent = twistInd.block(lhs.getMat(), i, 0);
 	Eigen::Ref<const TwistType> phiCurrent = phiInd.block(lhs.getMat(), i, 0);
-	// Calculate the individual Jacobian for ksi_(i-1)
-	bchJacobian<2, 1>(phiCurrent, ksiCurrent, JLksi);
-	bchJacobian<2, 0>(ksiPrev, phiCurrent, JRksi);
-	bchJacobian<2, 1>(ksiPrev, phiCurrent, JRphi);
+	// Calculate the individual Jacobians
+	bchJacobian<2, 0>(zero, phiCurrent, J1);
+	bchJacobian<2, 1>(zero, phiCurrent, J2);
+	bchJacobian<2, 1>(phiCurrent, zero, J3);
 	// Copy the adjoint blocks over to the matrices
 	for (int j = 0; j < twistLength; j++)
 	{
@@ -415,21 +434,21 @@ void StaticSolver::updateTwistAdjoint()
 	    {
 		int row = Jind.row(i, j);
 		int col = Jind.col(i, k);
-		ScalarType value = JLksi(j, k);
+		ScalarType value = -J3(j, k);
 		if (value != 0.0)
 		{
 		    twistTriplets.emplace_back(row, col, value);
 		}
-		value = JRphi(j, k);
+		value = J2(j, k);
 		if (value != 0.0)
 		{
 		    phiTriplets.emplace_back(row, col, value);
 		}
 		col -= twistLength;
-		value = JRksi(j, k);
+		value = J1(j, k);
 		if (value != 0.0)
 		{
-		    twistTriplets.emplace_back(row, col, -value);
+		    twistTriplets.emplace_back(row, col, value);
 		}
 	    }
 	}
@@ -438,10 +457,9 @@ void StaticSolver::updateTwistAdjoint()
     Jksi.setFromTriplets(twistTriplets.cbegin(), twistTriplets.cend());
     Jphi.setFromTriplets(phiTriplets.cbegin(), phiTriplets.cend());
     mat.copyToBlock(Jksi, BlockIndex::twist, BlockIndex::twist);
-    mat.copyToBlock(-Jphi, BlockIndex::twist, BlockIndex::phi);
+    mat.copyToBlock(Jphi, BlockIndex::twist, BlockIndex::phi);
     // Update RHS
-    rhs.copyToBlock(Jksi*lhs.getBlock(BlockIndex::twist, 0) - Jphi*lhs.getBlock(BlockIndex::phi, 0),
-		    BlockIndex::twist, 0);
+    rhs.copyToBlock(Jphi*lhs.getBlock(BlockIndex::phi, 0), BlockIndex::twist, 0);
     
     logger.endTimer();
     return;
@@ -490,12 +508,8 @@ void StaticSolver::updateFixedConstraints()
 	if (fixedConstraints[i].active)
 	{
 	    se3inv(gBody[fixedConstraints[i].node], g);
-	    logger.log() << "Constraint " << i << " desired location:\n" << fixedConstraints[i].g;
-	    
-	    logger.log() << "Constraint " << i << " current offset:\n" << g*fixedConstraints[i].g;
 	    g = (g*fixedConstraints[i].g).log();
 	    se3unhat(g, rhsInd.block(rhs.getMatRef(), i, 0));
-	    logger.log() << "New twist:\n" << rhsInd.block(rhs.getMat(), i, 0);
 	}
 	else
 	{
@@ -553,15 +567,10 @@ void StaticSolver::updateCoordinates()
     Indexer twistInd = lhs.getIndexer<twistLength, 1>(BlockIndex::twist, 0);
     for (int i = 1; i < params.nNodes; i++)
     {
-	// Save the inverse of the coordinate from the previous iteration
-	se3inv(gBody[i], gInv);
 	// Update the coordinate
 	se3hat(phiInd.block(lhs.getMat(), i, 0), expPhiHat);
 	expPhiHat = expPhiHat.exp();
 	gBody[i] = gBody[i-1]*expPhiHat;
-	// Update ksi
-	//se3unhat((gInv*gBody[i]).log(), twistInd.block(lhs.getMatRef(), i, 0));
-	twistInd.block(lhs.getMatRef(), i, 0).setZero();
     }
     return;
 }

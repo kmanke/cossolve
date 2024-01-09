@@ -31,14 +31,15 @@ libcossolve.cossolve_StaticSolver_addPointForce.restype = None
 libcossolve.cossolve_StaticSolver_addDistributedForce.restype = None
 libcossolve.cossolve_StaticSolver_clearForces.restype = None
 libcossolve.cossolve_StaticSolver_addFixedConstraint.restype = None
-libcossolve.cossolve_StaticSolver_getCoords.resType = ctypes.c_voidp
-libcossolve.cossolve_StaticSolver_getStrains.resType = ctypes.c_voidp
-libcossolve.cossolve_StaticSolver_getTwists.resType = ctypes.c_voidp
-libcossolve.cossolve_StaticSolver_getFixedConstraintForces.resType = ctypes.c_voidp
-libcossolve.cossolve_StaticSolver_getSystemMatrix.resType = ctypes.c_voidp
-libcossolve.cossolve_StaticSolver_getSystemRows.resType = ctypes.c_int
-libcossolve.cossolve_StaticSolver_getSystemCols.resType = ctypes.c_int
-libcossolve.cossolve_StaticSolver_solve.resType = None
+libcossolve.cossolve_StaticSolver_getCoords.restype = ctypes.c_voidp
+libcossolve.cossolve_StaticSolver_getStrains.restype = ctypes.c_voidp
+libcossolve.cossolve_StaticSolver_getTwists.restype = ctypes.c_voidp
+libcossolve.cossolve_StaticSolver_getFixedConstraintForces.restype = ctypes.c_voidp
+libcossolve.cossolve_StaticSolver_getSystemMatrix.restype = ctypes.c_voidp
+libcossolve.cossolve_StaticSolver_getSystemRows.restype = ctypes.c_int
+libcossolve.cossolve_StaticSolver_getSystemCols.restype = ctypes.c_int
+libcossolve.cossolve_StaticSolver_solve.restype = None
+libcossolve.cossolve_StaticSolver_convergenceParameter.restype = ctypes.c_double
 
 # Import objects so they can be accessed by anyone who includes this package
 from .Solver import Solver

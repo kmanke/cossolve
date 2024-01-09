@@ -96,6 +96,18 @@ class Solver:
                                                              ctypes.c_voidp(g.ctypes.data))
         return
 
-    def solve(self):
-        libcossolve.cossolve_StaticSolver_solve(self.handle)
+    def convergence_parameter(self):
+        return libcossolve.cossolve_StaticSolver_convergenceParameter(self.handle)
+
+    # Solves the system repeatedly until the convergence parameter is less than tolerance.
+    # The convergence parameter is log of the cost function.
+    def solve(self, tolerance = None):
+        if tolerance is None:
+            libcossolve.cossolve_StaticSolver_solve(self.handle)
+            return
+        # Otherwise, repeatedly solve until convergence achieved
+        cost = 1e16
+        while cost > tolerance:
+            libcossolve.cossolve_StaticSolver_solve(self.handle)
+            cost = self.convergence_parameter()
         return
